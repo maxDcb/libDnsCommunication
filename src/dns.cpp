@@ -66,13 +66,13 @@ void Dns::setMsg(const std::string& msg)
         int startPos = 0;
         while (startPos < length) 
         {
-            indxMsg++;
             int chunkSize = std::min(maxLength, int(length - startPos));
             std::string tmp = msg.substr(startPos, chunkSize);
             packetJson["k"]=indxMsg;
             packetJson["m"]=tmp;
             packet = packetJson.dump();
             messages.push_back(packetJson);
+            indxMsg++;
             
             startPos += chunkSize;
         }
