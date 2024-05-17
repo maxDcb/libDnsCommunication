@@ -6,7 +6,7 @@
 #include <cctype>
 #include <string_view>
 
-#include <json.hpp>
+#include "nlohmann/json.hpp"
 #include "dns.hpp"
 
 

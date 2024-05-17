@@ -26,6 +26,7 @@ src/dnsPacker.cpp
 
 
 add_library(${PROJECT_NAME} STATIC ${SOURCE_FILES})
+target_link_libraries(${PROJECT_NAME} nlohmann_json::nlohmann_json)
 target_include_directories(${PROJECT_NAME} PUBLIC src)
 
 add_subdirectory(tests)
