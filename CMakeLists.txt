@@ -26,7 +26,9 @@ src/dnsPacker.cpp
 
 
 add_library(${PROJECT_NAME} STATIC ${SOURCE_FILES})
-target_link_libraries(${PROJECT_NAME} nlohmann_json::nlohmann_json)
+set_property(TARGET ${PROJECT_NAME} PROPERTY
+  MSVC_RUNTIME_LIBRARY "MultiThreaded")
+target_link_libraries(${PROJECT_NAME} )
 target_include_directories(${PROJECT_NAME} PUBLIC src)
 
 add_subdirectory(tests)
