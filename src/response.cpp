@@ -2,6 +2,7 @@
 #include <sstream>
 #include <cstdint>
 #include <cstring>
+#include <set>
 
 #ifdef __linux__
 
@@ -56,20 +57,24 @@ string Response::asString() const
 }
 
 
-void Response::decode(const char* buffer, int size) 
+void Response::decode(const char* buffer, int size)
 {
+    const char* begin = buffer;
+    const char* end = buffer + size;
+
     decode_hdr(buffer);
     buffer += HDR_OFFSET;
-    
+
     // query
     std::string respDom;
-    decode_domain(buffer, respDom);
-    m_name=respDom;
+    decode_domain(buffer, respDom, begin, end);
+    m_name = respDom;
     m_type = get16bits(buffer);
     m_class = get16bits(buffer);
 
     // answer
-    decode_domain(buffer, respDom);
+    decode_domain(buffer, respDom, begin, end);
+    m_name = respDom;
     uint type_ = get16bits(buffer);
     uint class_ = get16bits(buffer);
     m_ttl = get32bits(buffer);
@@ -120,39 +125,49 @@ int Response::code(char* buffer)
 }
 
 
-void Response::decode_domain(const char*& buffer, std::string& domain) 
+void Response::decode_domain(const char*& buffer, std::string& domain,
+                             const char* begin, const char* end)
 {
     domain.clear();
 
-    u_int ptr=0;
-    memcpy(&ptr, buffer, 2);
-    ptr = ntohs(ptr);
+    const char* cur = buffer;
+    bool jumped = false;
+    std::set<const char*> visited;
 
-    const int val = 49152; // 1100 0000 0000 0000 https://osqa-ask.wireshark.org/questions/50806/help-understanding-dns-packet-data/
-    if (val <= ptr) 
-    {
-        domain = "ptr domain";
-        *buffer++;
-        *buffer++;
-    } 
-    else
-    { 
-        int length = *buffer++;
-        // std::cout << "length "  << length << std::endl;
-        while (length != 0) 
-        {
-            for (int i = 0; i < length; i++) 
-            {
-                char c = *buffer++;
-                domain.append(1, c);
+    while (cur < end) {
+        uint8_t len = static_cast<uint8_t>(*cur);
+
+        if ((len & 0xC0) == 0xC0) {
+            if (cur + 1 >= end) { buffer = end; return; }
+            uint16_t offset = ((len & 0x3F) << 8) | static_cast<uint8_t>(cur[1]);
+            const char* ptr = begin + offset;
+            if (ptr < begin || ptr >= end || visited.count(ptr)) {
+                buffer = end;
+                return;
             }
-            
-            length = *buffer++;
-            // std::cout << "length "  << length << std::endl;
-            if (length != 0) 
-                domain.append(1,'.');
+            visited.insert(ptr);
+            if (!jumped) {
+                buffer = cur + 2;
+                jumped = true;
+            }
+            cur = ptr;
+            continue;
         }
+
+        if (len == 0) {
+            ++cur;
+            if (!jumped) buffer = cur;
+            return;
+        }
+
+        ++cur;
+        if (cur + len > end) { buffer = end; return; }
+        domain.append(cur, len);
+        cur += len;
+        if (*cur != 0) domain.push_back('.');
     }
+
+    buffer = end;
 }
 
 
