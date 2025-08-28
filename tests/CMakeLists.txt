@@ -24,3 +24,12 @@ if(WIN32)
 else()
         target_link_libraries(fonctionalTest Dnscommunication pthread)
 endif()
+
+add_executable(messageTest "message_test.cpp" )
+set_property(TARGET messageTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
+
+if(WIN32)
+        target_link_libraries(messageTest Dnscommunication)
+else()
+        target_link_libraries(messageTest Dnscommunication pthread)
+endif()

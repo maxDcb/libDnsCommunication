@@ -70,7 +70,7 @@ void Message::decode_hdr(const char* buffer)
     m_aa = fields & AA_MASK;
     m_tc = fields & TC_MASK;
     m_rd = fields & RD_MASK;
-    m_ra = fields & RA_MASK;
+    m_ra = (fields & RA_MASK) >> 7;
 
     m_qdCount = get16bits(buffer);
     m_anCount = get16bits(buffer);
@@ -89,6 +89,7 @@ void Message::code_hdr(char* buffer)
     fields += (m_aa << 10);
     fields += (m_tc << 9);
     fields += (m_rd << 8);
+    fields += (m_ra << 7);
     put16bits(buffer, fields);
 
     put16bits(buffer, m_qdCount);

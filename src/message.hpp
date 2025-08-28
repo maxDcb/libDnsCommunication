@@ -100,7 +100,7 @@ private:
     static const uint AA_MASK = 0x0400;
     static const uint TC_MASK = 0x0200;
     static const uint RD_MASK = 0x0100;
-    static const uint RA_MASK = 0x8000;
+    static const uint RA_MASK = 0x0080;
     static const uint RCODE_MASK = 0x000F;
 };
 
