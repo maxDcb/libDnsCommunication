@@ -33,9 +33,13 @@ Dns::~Dns()
 #undef min
 void Dns::setMsg(const std::string& msg)
 {
-    const std::lock_guard<std::mutex> lock(m_mutex);   
+    const std::lock_guard<std::mutex> lock(m_mutex);
 
-    std::string sessionId = generateRandomString(5);
+    std::string sessionId;
+    do
+    {
+        sessionId = generateRandomString(5);
+    } while (m_msgReceived.find(sessionId) != m_msgReceived.end());
 
     json packetJson;
     packetJson["m"] = msg;
@@ -44,7 +48,6 @@ void Dns::setMsg(const std::string& msg)
     packetJson["k"] = 0;
     std::string packet = packetJson.dump();
 
-    // TODO should have a session ID to handle multi sessions
     if(packet.size() > m_maxMessageSize)
     {
         std::vector<json> messages;
@@ -133,49 +136,23 @@ void Dns::handleResponse(const std::string& rdata)
 
     std::string session = packetJson["s"];
 
-    m_moreMsgToGet=true;    
-    bool isNewSession=false;
     int k = packetJson["k"].get<int>();
     int n = packetJson["n"].get<int>();
 
-    for(int i=0; i<m_msgReceived.size(); i++)
+    auto& packet = m_msgReceived[session];
+    if(packet.id.empty())
+        packet.id = session;
+    packet.data.append(packetJson["m"].get<std::string>());
+    packet.isFull = (k == n-1);
+
+    m_moreMsgToGet = false;
+    for(const auto& p : m_msgReceived)
     {
-        if(m_msgReceived[i].id==session)
+        if(!p.second.isFull)
         {
-            isNewSession=true;
-            m_msgReceived[i].data.append(packetJson["m"]);
-            if(k==n-1)
-            {
-                m_msgReceived[i].isFull=true;
-                m_moreMsgToGet=false;
-            }
-
-            // std::cout << "session " << session << std::endl;
-            // std::cout << "m_msgReceived[i].data " << m_msgReceived[i].data << std::endl;
-            // std::cout << "m_msgReceived[i].isFull " << m_msgReceived[i].isFull << std::endl;
+            m_moreMsgToGet = true;
+            break;
         }
-    }
-
-    if(isNewSession==false)
-    {
-        Packet packet;
-        packet.id.append(session);
-        packet.data.append(packetJson["m"]);
-        if(k==n-1)
-        {
-           packet.isFull=true;
-           m_moreMsgToGet=false;
-        }
-        else
-        {
-            packet.isFull=false;
-            m_moreMsgToGet=true;
-        }
-        m_msgReceived.push_back(packet);
-
-        // std::cout << "packet.id " << packet.id << std::endl;
-        // std::cout << "packet.data " << packet.data << std::endl;
-        // std::cout << "packet.isFull " << packet.isFull << std::endl;
     }
 }
 
@@ -195,17 +172,27 @@ std::string Dns::getMsg()
         handleResponse(qnameTmp[i]);
     
     std::string result;
-    for (auto it = m_msgReceived.begin(); it != m_msgReceived.end();) 
+    for (auto it = m_msgReceived.begin(); it != m_msgReceived.end();)
     {
-        if (it->isFull) 
+        if (it->second.isFull)
         {
-            result = it->data;
+            result = it->second.data;
             it = m_msgReceived.erase(it);
             break;
-        } 
-        else 
+        }
+        else
         {
             ++it;
+        }
+    }
+
+    m_moreMsgToGet = false;
+    for(const auto& p : m_msgReceived)
+    {
+        if(!p.second.isFull)
+        {
+            m_moreMsgToGet = true;
+            break;
         }
     }
 
