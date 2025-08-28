@@ -58,6 +58,15 @@ void Server::stop()
 
 void Server::launch()
 {
+#ifdef _WIN32
+    WSADATA wsa{};
+    if (WSAStartup(MAKEWORD(2,2), &wsa) != 0) 
+    {
+        std::cerr << "[dns::Server] WSAStartup failed\n";
+        return;
+    }
+#endif
+
     m_isStoped=false;
     m_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
 
@@ -66,12 +75,15 @@ void Server::launch()
     m_address.sin_port = htons(m_port);
 
     int rbind = bind(m_sockfd, (struct sockaddr *) & m_address, sizeof(struct sockaddr_in));
-    
     if (rbind != 0) 
     {
         string text("Could not bind: ");
         text += strerror(errno);
-        
+
+#ifdef _WIN32
+        WSACleanup();
+#endif
+
         return;
     }
 

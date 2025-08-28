@@ -11,9 +11,15 @@ It encodes arbitrary data into DNS TXT records so a client and server can exchan
 
 ## Building
 ```bash
+# linux
 mkdir build && cd build
 cmake ..
 make
+
+#windows
+mkdir build && cd build
+cmake ..
+msbuild Dnscommunication.sln
 ````
 
 ## Running Examples
