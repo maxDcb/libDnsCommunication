@@ -40,8 +40,8 @@ void Dns::setMsg(const std::string& msg)
     json packetJson;
     packetJson["m"] = msg;
     packetJson["s"] = sessionId;
-    packetJson["n"] = "1";
-    packetJson["k"] = "0";
+    packetJson["n"] = 1;
+    packetJson["k"] = 0;
     std::string packet = packetJson.dump();
 
     // TODO should have a session ID to handle multi sessions
@@ -49,8 +49,8 @@ void Dns::setMsg(const std::string& msg)
     {
         std::vector<json> messages;
         packetJson["m"] = "";
-        packetJson["n"] = "0";
-        packetJson["k"] = "0";
+        packetJson["n"] = 0;
+        packetJson["k"] = 0;
         packet = packetJson.dump();
 
         int maxLength = m_maxMessageSize - static_cast<int>(packet.size());
@@ -68,8 +68,8 @@ void Dns::setMsg(const std::string& msg)
         size_t nbMaxMessage = messages.size();
         for(size_t i = 0; i < nbMaxMessage; ++i)
         {
-            messages[i]["n"] = std::to_string(nbMaxMessage);
-            messages[i]["k"] = std::to_string(i);
+            messages[i]["n"] = nbMaxMessage;
+            messages[i]["k"] = i;
             std::string msgHex = stringToHex(messages[i].dump());
             m_msgQueue.push(msgHex);
         }
@@ -135,18 +135,9 @@ void Dns::handleResponse(const std::string& rdata)
 
     m_moreMsgToGet=true;    
     bool isNewSession=false;
-    int k = 0;
-    int n = 0;
-    try
-    {
-        k = std::stoi(packetJson["k"]);
-        n = std::stoi(packetJson["n"]);
-    }
-    catch(...)
-    {
-        k = 0;
-        n = 0;
-    }
+    int k = packetJson["k"].get<int>();
+    int n = packetJson["n"].get<int>();
+
     for(int i=0; i<m_msgReceived.size(); i++)
     {
         if(m_msgReceived[i].id==session)

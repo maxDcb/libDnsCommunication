@@ -15,3 +15,12 @@ if(WIN32)
 else()
         target_link_libraries(utilsTest Dnscommunication pthread)
 endif()
+
+add_executable(fonctionalTest "fonctional_test.cpp" )
+set_property(TARGET fonctionalTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
+
+if(WIN32)
+        target_link_libraries(fonctionalTest Dnscommunication)
+else()
+        target_link_libraries(fonctionalTest Dnscommunication pthread)
+endif()
