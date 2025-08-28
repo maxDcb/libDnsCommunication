@@ -46,3 +46,13 @@ if(WIN32)
 else()
         target_link_libraries(messageTest Dnscommunication pthread)
 endif()
+
+
+add_executable(interleavedTest "interleaved_messages_test.cpp" )
+set_property(TARGET interleavedTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
+
+if(WIN32)
+        target_link_libraries(interleavedTest Dnscommunication)
+else()
+        target_link_libraries(interleavedTest Dnscommunication pthread)
+endif()

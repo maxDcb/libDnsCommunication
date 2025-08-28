@@ -7,6 +7,7 @@
 #include <mutex>
 #include <vector>
 #include <queue>
+#include <unordered_map>
 
 #ifdef __linux__
 
@@ -56,7 +57,7 @@ protected:
     std::queue<std::string> m_msgQueue;
 
     bool m_moreMsgToGet;
-    std::vector<Packet> m_msgReceived;
+    std::unordered_map<std::string, Packet> m_msgReceived;
     std::vector<std::string> m_qnameReceived;
 
 private:
