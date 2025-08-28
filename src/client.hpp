@@ -32,7 +32,7 @@ class Client : public Dns
 {
 public:
 
-    Client(const std::string& dnsServerAdd, const std::string& domainToResolve);
+    Client(const std::string& dnsServerAdd, const std::string& domainToResolve, int port = 53);
     ~Client();
 
     void sendMessage(const std::string& msg);
@@ -44,6 +44,7 @@ private:
     int m_sockfd;
 
     std::string m_dnsServerAdd;
+    int m_port;
 };
 
 }

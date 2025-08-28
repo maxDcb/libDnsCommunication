@@ -2,6 +2,7 @@
 #include <string>
 #include <iomanip>
 #include <sstream>
+#include <random>
 
 #include "dnsPacker.hpp"
 
@@ -60,16 +61,14 @@ std::string addDotEvery62Chars(const std::string& str)
 std::string generateRandomString(int length) 
 {
     const std::string charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    static std::mt19937 rng{std::random_device{}()};
+    std::uniform_int_distribution<std::size_t> dist(0, charset.size() - 1);
     std::string result;
-
-    // Seed the random number generator
-    std::srand(static_cast<unsigned int>(std::time(nullptr)));
-
-    for (int i = 0; i < length; ++i) 
+    result.reserve(length);
+    for (int i = 0; i < length; ++i)
     {
-        result += charset[std::rand() % charset.length()];
+        result += charset[dist(rng)];
     }
-
     return result;
 }
 

@@ -22,12 +22,12 @@ Dns::Dns(const std::string& domain)
     m_maxMessageSize = getMaxMsgLen(domain);
     m_moreMsgToGet = false;
 
-    std::cout << "maxMessageSize " << std::to_string(m_maxMessageSize) << std::endl;
+    // std::cout << "maxMessageSize " << std::to_string(m_maxMessageSize) << std::endl;
 }
 
 
-Dns::~Dns() 
-{ 
+Dns::~Dns()
+{
 }
 
 #undef min
@@ -38,62 +38,53 @@ void Dns::setMsg(const std::string& msg)
     std::string sessionId = generateRandomString(5);
 
     json packetJson;
-    packetJson += json::object_t::value_type("m", msg);
-    packetJson += json::object_t::value_type("s", sessionId);
-    packetJson += json::object_t::value_type("n", 1);
-    packetJson += json::object_t::value_type("k", 0);
+    packetJson["m"] = msg;
+    packetJson["s"] = sessionId;
+    packetJson["n"] = 1;
+    packetJson["k"] = 0;
     std::string packet = packetJson.dump();
 
     // TODO should have a session ID to handle multi sessions
     if(packet.size() > m_maxMessageSize)
     {
-        int nbMaxMessage = msg.size()/m_maxMessageSize*2;
-
-        // std::cout << msg.size() << std::endl;
-        // std::cout << m_maxMessageSize << std::endl;
-        // std::cout << nbMaxMessage << std::endl;
-
-        std:vector<json> messages;
-
-        int indxMsg=0;
-        packetJson["m"]="";
-        packetJson["n"]=nbMaxMessage;
-        packetJson["k"]=indxMsg;
+        std::vector<json> messages;
+        packetJson["m"] = "";
+        packetJson["n"] = 0;
+        packetJson["k"] = 0;
         packet = packetJson.dump();
 
-        int maxLength = m_maxMessageSize-packet.size();
-        int length = msg.length();
-        int startPos = 0;
-        while (startPos < length) 
+        int maxLength = m_maxMessageSize - static_cast<int>(packet.size());
+        size_t totalLen = msg.length();
+        size_t startPos = 0;
+        while (startPos < totalLen)
         {
-            int chunkSize = std::min(maxLength, int(length - startPos));
+            size_t chunkSize = std::min<size_t>(maxLength, totalLen - startPos);
             std::string tmp = msg.substr(startPos, chunkSize);
-            packetJson["k"]=indxMsg;
-            packetJson["m"]=tmp;
-            packet = packetJson.dump();
+            packetJson["m"] = tmp;
             messages.push_back(packetJson);
-            indxMsg++;
-            
             startPos += chunkSize;
         }
 
-        for(int i=0; i<messages.size(); i++)
+        size_t nbMaxMessage = messages.size();
+        for(size_t i = 0; i < nbMaxMessage; ++i)
         {
-            messages[i]["n"]=messages.size();
-
-            // std::cout << "packet " << messages[i].dump().size() << " " << messages[i].dump() << std::endl;
-
+            messages[i]["n"] = nbMaxMessage;
+            messages[i]["k"] = i;
             std::string msgHex = stringToHex(messages[i].dump());
             m_msgQueue.push(msgHex);
         }
     }
-    // need only one message
     else
     {
         std::string msgHex = stringToHex(packet);
-
         m_msgQueue.push(msgHex);
     }
+}
+
+void Dns::addReceivedQName(const std::string& qname)
+{
+    const std::lock_guard<std::mutex> lock(m_mutex);
+    m_qnameReceived.push_back(qname);
 }
 
 
@@ -146,6 +137,7 @@ void Dns::handleResponse(const std::string& rdata)
     bool isNewSession=false;
     int k = packetJson["k"].get<int>();
     int n = packetJson["n"].get<int>();
+
     for(int i=0; i<m_msgReceived.size(); i++)
     {
         if(m_msgReceived[i].id==session)

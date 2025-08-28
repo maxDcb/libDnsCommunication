@@ -9,11 +9,12 @@
 
 #include "server.hpp"
 
-
 #ifdef _WIN32
-
 #pragma comment(lib, "ws2_32.lib")
-
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <unistd.h>
 #endif
 
 using namespace std;
@@ -28,21 +29,44 @@ Server::Server(int port, const std::string& domainToResolve)
 }
 
 
-Server::~Server() 
-{ 
-    m_isStoped=true;
-    this->m_dnsServ->join();
+Server::~Server()
+{
+    stop();
 }
 
 
 void Server::stop()
 {
+    if (m_isStoped)
+        return;
     m_isStoped=true;
+    // Send an empty datagram to unblock recvfrom
+    struct sockaddr_in addr = m_address;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    char byte = 0;
+    sendto(m_sockfd, &byte, 1, 0, (struct sockaddr*)&addr, sizeof(addr));
+    if(m_dnsServ && m_dnsServ->joinable())
+        m_dnsServ->join();
+#ifdef __linux__
+    close(m_sockfd);
+#elif _WIN32
+    closesocket(m_sockfd);
+    WSACleanup();
+#endif
 }
 
 
 void Server::launch()
 {
+#ifdef _WIN32
+    WSADATA wsa{};
+    if (WSAStartup(MAKEWORD(2,2), &wsa) != 0) 
+    {
+        std::cerr << "[dns::Server] WSAStartup failed\n";
+        return;
+    }
+#endif
+
     m_isStoped=false;
     m_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
 
@@ -51,12 +75,15 @@ void Server::launch()
     m_address.sin_port = htons(m_port);
 
     int rbind = bind(m_sockfd, (struct sockaddr *) & m_address, sizeof(struct sockaddr_in));
-    
     if (rbind != 0) 
     {
         string text("Could not bind: ");
         text += strerror(errno);
-        
+
+#ifdef _WIN32
+        WSACleanup();
+#endif
+
         return;
     }
 
@@ -78,7 +105,7 @@ void Server::run()
         query.decode(buffer, nbytes);
 
         std::string qname = query.getQName();
-        m_qnameReceived.push_back(qname);
+        addReceivedQName(qname);
 
         Response response;
         handleQuery(query, response);
