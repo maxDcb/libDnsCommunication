@@ -87,7 +87,7 @@ void Response::decode(const char* buffer, int size)
     }
     else
     {
-        std::cout << "TODO: decode type diff than txt" << std::endl;
+        // std::cout << "TODO: decode type diff than txt" << std::endl;
     }
 }
 

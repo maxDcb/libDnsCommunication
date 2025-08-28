@@ -48,6 +48,7 @@ public:
 
 protected:
     void handleResponse(const std::string& rdata);
+    void addReceivedQName(const std::string& qname);
     
     std::string m_domainToResolve;
     int m_maxMessageSize;

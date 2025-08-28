@@ -155,9 +155,9 @@ void Message::put16bits(char*& buffer, uint value)
 
 void Message::put32bits(char*& buffer, ulong value)  
 {
-    buffer[0] = (value & 0xFF000000) >> 24;
-    buffer[1] = (value & 0xFF0000) >> 16;
-    buffer[2] = (value & 0xFF00) >> 16;
-    buffer[3] = (value & 0xFF) >> 16;
+    buffer[0] = (value >> 24) & 0xFF;
+    buffer[1] = (value >> 16) & 0xFF;
+    buffer[2] = (value >> 8) & 0xFF;
+    buffer[3] = value & 0xFF;
     buffer += 4;
 }

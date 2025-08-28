@@ -9,11 +9,12 @@
 
 #include "server.hpp"
 
-
 #ifdef _WIN32
-
 #pragma comment(lib, "ws2_32.lib")
-
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <unistd.h>
 #endif
 
 using namespace std;
@@ -28,16 +29,30 @@ Server::Server(int port, const std::string& domainToResolve)
 }
 
 
-Server::~Server() 
-{ 
-    m_isStoped=true;
-    this->m_dnsServ->join();
+Server::~Server()
+{
+    stop();
 }
 
 
 void Server::stop()
 {
+    if (m_isStoped)
+        return;
     m_isStoped=true;
+    // Send an empty datagram to unblock recvfrom
+    struct sockaddr_in addr = m_address;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    char byte = 0;
+    sendto(m_sockfd, &byte, 1, 0, (struct sockaddr*)&addr, sizeof(addr));
+    if(m_dnsServ && m_dnsServ->joinable())
+        m_dnsServ->join();
+#ifdef __linux__
+    close(m_sockfd);
+#elif _WIN32
+    closesocket(m_sockfd);
+    WSACleanup();
+#endif
 }
 
 
@@ -78,7 +93,7 @@ void Server::run()
         query.decode(buffer, nbytes);
 
         std::string qname = query.getQName();
-        m_qnameReceived.push_back(qname);
+        addReceivedQName(qname);
 
         Response response;
         handleQuery(query, response);
