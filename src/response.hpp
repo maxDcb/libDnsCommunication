@@ -29,6 +29,7 @@ public:
     void setRdata(const std::string& value) { m_rdata = value; }
 
     const std::string& getRdata() { return m_rdata; }
+    const std::string& getName() const { return m_name; }
     
 private:
     std::string m_name;
@@ -38,7 +39,7 @@ private:
     uint m_rdLength;
     std::string m_rdata;
 
-    void decode_domain(const char*& buffer, std::string& domain);
+    void decode_domain(const char*& buffer, std::string& domain, const char* begin, const char* end);
     void code_domain(char*& buffer, const std::string& domain);
 };
 
