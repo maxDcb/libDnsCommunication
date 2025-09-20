@@ -128,7 +128,8 @@ void Client::sendMessage(const std::string& msg)
         std::string rdata = response.getRdata();
         handleResponse(rdata);
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        // TODO make it configurable - Resolvers usually accept ~5–20 qps per client without rate-limiting. Above that, some will throttle or blacklist.
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
 #ifdef __linux__
