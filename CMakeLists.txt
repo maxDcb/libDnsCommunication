@@ -4,6 +4,8 @@ project(Dnscommunication VERSION 0.0.0 LANGUAGES CXX C)
 set(CMAKE_BUILD_TYPE Release)
 set(CMAKE_CXX_STANDARD 17)
 
+option(DNS_ENABLE_LOGGING "Enable debug logging output" ON)
+
 IF (WIN32)
     set(CMAKE_CXX_FLAGS_RELEASE "-MT -O1 -Ob0")
     set(CMAKE_C_FLAGS_RELEASE "-MT -O1 -Ob0")
@@ -30,6 +32,9 @@ set_property(TARGET ${PROJECT_NAME} PROPERTY
   MSVC_RUNTIME_LIBRARY "MultiThreaded")
 target_link_libraries(${PROJECT_NAME} )
 target_include_directories(${PROJECT_NAME} PUBLIC src)
+if(DNS_ENABLE_LOGGING)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC DNS_ENABLE_LOGGING)
+endif()
 if(WIN32)
 else()
 	target_link_libraries(${PROJECT_NAME} pthread)

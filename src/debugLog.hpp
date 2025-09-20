@@ -11,6 +11,10 @@ namespace dns
 {
 namespace debug
 {
+#if defined(DNS_ENABLE_LOGGING)
+
+inline constexpr bool kEnabled = true;
+
 inline std::string timestamp()
 {
     using namespace std::chrono;
@@ -55,6 +59,38 @@ inline void logDuration(const std::string& component,
 {
     log(component, activity + " took " + formatDuration(duration));
 }
+
+#else
+
+inline constexpr bool kEnabled = false;
+
+inline std::string timestamp()
+{
+    return {};
+}
+
+inline std::string formatDuration(std::chrono::steady_clock::duration duration)
+{
+    (void)duration;
+    return {};
+}
+
+inline void log(const std::string& component, const std::string& message)
+{
+    (void)component;
+    (void)message;
+}
+
+inline void logDuration(const std::string& component,
+                        const std::string& activity,
+                        std::chrono::steady_clock::duration duration)
+{
+    (void)component;
+    (void)activity;
+    (void)duration;
+}
+
+#endif
 } // namespace debug
 } // namespace dns
 
