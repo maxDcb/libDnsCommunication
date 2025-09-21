@@ -54,12 +54,12 @@ int main() {
     response.setName(query.getQName());
     response.setType(query.getQType());
     response.setClass(query.getQClass());
-    response.setRdata(serverHex);
+    response.setTxtRdata(serverHex);
 
     server.addQName(qname);
     std::string serverReceived = server.getMsg();
 
-    client.handle(response.getRdata());
+    client.handle(response.getRdataAsString());
     std::string clientReceived = client.getMsg();
 
     if (serverReceived != clientMsg) return 1;

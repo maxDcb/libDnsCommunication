@@ -89,8 +89,8 @@ protected:
     int get16bits(const char*& buffer) ;
     int get32bits(const char*& buffer) ;
 
-    void put16bits(char*& buffer, uint value) ;
-    void put32bits(char*& buffer, ulong value) ;
+    void put16bits(char*& buffer, uint value) const;
+    void put32bits(char*& buffer, ulong value) const;
 
     void log_buffer(const char* buffer, int size) ;
     

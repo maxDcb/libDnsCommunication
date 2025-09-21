@@ -146,7 +146,7 @@ int Message::get32bits(const char*& buffer)
 }
 
 
-void Message::put16bits(char*& buffer, uint value)  
+void Message::put16bits(char*& buffer, uint value) const
 {
     buffer[0] = (value & 0xFF00) >> 8;
     buffer[1] = value & 0xFF;
@@ -154,7 +154,7 @@ void Message::put16bits(char*& buffer, uint value)
 }
 
 
-void Message::put32bits(char*& buffer, ulong value)  
+void Message::put32bits(char*& buffer, ulong value) const
 {
     buffer[0] = (value >> 24) & 0xFF;
     buffer[1] = (value >> 16) & 0xFF;

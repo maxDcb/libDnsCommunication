@@ -1,5 +1,7 @@
-#include <iostream>
+#include <array>
 #include <cstring>
+#include <optional>
+#include <vector>
 
 #include <algorithm>
 #include <cctype>
@@ -20,8 +22,118 @@
 using namespace std;
 using namespace dns;
 
+namespace
+{
 
-Server::Server(int port, const std::string& domainToResolve) 
+bool parseIPv4Address(const std::string& text, std::vector<uint8_t>& out)
+{
+    out.clear();
+    if (std::count(text.begin(), text.end(), '.') != 3)
+        return false;
+
+    size_t start = 0;
+    for (int i = 0; i < 4; ++i)
+    {
+        size_t end = text.find('.', start);
+        if (end == std::string::npos)
+            end = text.size();
+
+        if (end <= start || end - start > 3)
+            return false;
+
+        int value = 0;
+        for (size_t j = start; j < end; ++j)
+        {
+            unsigned char c = static_cast<unsigned char>(text[j]);
+            if (!std::isdigit(c))
+                return false;
+            value = value * 10 + (c - '0');
+            if (value > 255)
+                return false;
+        }
+
+        out.push_back(static_cast<uint8_t>(value));
+        start = end + 1;
+    }
+
+    return out.size() == 4 && start == text.size() + 1;
+}
+
+
+bool parseIPv6Address(const std::string& text, std::vector<uint8_t>& out)
+{
+    out.clear();
+    if (text.find(':') == std::string::npos)
+        return false;
+
+    std::array<uint8_t, 16> buffer{};
+    int res = inet_pton(AF_INET6, text.c_str(), buffer.data());
+    if (res != 1)
+        return false;
+
+    out.assign(buffer.begin(), buffer.end());
+    return true;
+}
+
+
+bool looksLikeDomainName(const std::string& text)
+{
+    if (text.empty())
+        return false;
+    if (text.size() > 253)
+        return false;
+    if (text.find('.') == std::string::npos)
+        return false;
+    if (text.find("..") != std::string::npos)
+        return false;
+
+    size_t start = 0;
+    while (start < text.size())
+    {
+        size_t dot = text.find('.', start);
+        size_t length = (dot == std::string::npos) ? text.size() - start : dot - start;
+        if (length == 0 || length > 63)
+            return false;
+
+        for (size_t i = 0; i < length; ++i)
+        {
+            unsigned char c = static_cast<unsigned char>(text[start + i]);
+            if (!(std::isalnum(c) || c == '-'))
+                return false;
+        }
+
+        if (dot == std::string::npos)
+            break;
+        start = dot + 1;
+    }
+
+    return true;
+}
+
+
+std::optional<uint16_t> parsePreference(const std::string& text)
+{
+    if (text.empty())
+        return std::nullopt;
+
+    unsigned long value = 0;
+    for (char c : text)
+    {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (!std::isdigit(uc))
+            return std::nullopt;
+        value = value * 10 + (uc - '0');
+        if (value > 65535)
+            return std::nullopt;
+    }
+
+    return static_cast<uint16_t>(value);
+}
+
+}
+
+
+Server::Server(int port, const std::string& domainToResolve)
 : Dns(domainToResolve)
 , m_port(port)
 { 
@@ -139,34 +251,93 @@ void Server::handleQuery(const Query& query, Response& response)
 
     // std::cout << "domainName " << domainName << std::endl;
     
-    if (domainName.empty()) 
-    {
-        // cout << "[-] Domain not in scope !" << endl;
+    response.setID(query.getID());
+    response.setName(query.getQName());
+    response.setClass(query.getQClass());
+    response.setType(query.getQType());
+    response.setQdCount(1);
+    response.setAnCount(0);
+    response.setNsCount(0);
+    response.setArCount(0);
+    response.clearRdata();
 
-        response.setID( query.getID() );
-        response.setName( query.getQName() );
-        response.setType( query.getQType() );
-        response.setClass( query.getQClass() );
+    if (domainName.empty())
+    {
         response.setRCode(Response::NameError);
-        response.setRdLength(1); // null label
+        return;
     }
-    else 
+
+    uint16_t qType = query.getQType();
+    bool rdataSet = false;
+
+    switch (qType)
     {
-        // cout << "[+] Domain in scope !" << endl;
+        case 1:
+        {
+            std::vector<uint8_t> bytes;
+            if (parseIPv4Address(domainName, bytes))
+            {
+                response.setAddressRdata(bytes);
+                rdataSet = true;
+            }
+            break;
+        }
+        case 28:
+        {
+            std::vector<uint8_t> bytes;
+            if (parseIPv6Address(domainName, bytes))
+            {
+                response.setAddressRdata(bytes);
+                rdataSet = true;
+            }
+            break;
+        }
+        case 5:
+        {
+            if (looksLikeDomainName(domainName))
+            {
+                response.setDomainRdata(domainName);
+                rdataSet = true;
+            }
+            break;
+        }
+        case 15:
+        {
+            std::string host = domainName;
+            std::optional<uint16_t> preference;
+            size_t spacePos = domainName.find(' ');
+            if (spacePos != std::string::npos)
+            {
+                preference = parsePreference(domainName.substr(0, spacePos));
+                host = domainName.substr(spacePos + 1);
+            }
 
-        response.setRCode(Response::Ok);
-        response.setRdLength(domainName.size()+2); // + initial label length & null label
-
-        response.setID( query.getID() );
-        response.setQdCount(1);
-        response.setAnCount(1);
-        response.setName( query.getQName() );
-        response.setType( query.getQType() );
-        response.setClass( query.getQClass() );
-        response.setRdata(domainName);
+            if (looksLikeDomainName(host))
+            {
+                Response::DomainRdata mx{host, preference};
+                response.setDomainRdata(mx);
+                rdataSet = true;
+            }
+            break;
+        }
+        case 16:
+        {
+            response.setTxtRdata(domainName);
+            rdataSet = true;
+            break;
+        }
+        default:
+            break;
     }
 
-    // text = "Resolver::process()";
-    // text += response.asString();
-    // logger.trace(text);
+    if (rdataSet)
+    {
+        response.setRCode(Response::Ok);
+        response.setAnCount(1);
+    }
+    else
+    {
+        response.setRCode(Response::ServerFailure);
+        response.clearRdata();
+    }
 }

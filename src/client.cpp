@@ -1,4 +1,4 @@
-#include <iostream>
+#include <array>
 #include <algorithm>
 #include <cctype>
 #include <string_view>
@@ -13,8 +13,108 @@
 
 #include "client.hpp"
 
+#ifdef __linux__
+#include <arpa/inet.h>
+#endif
+
 using namespace std;
 using namespace dns;
+
+namespace
+{
+
+bool looksLikeIPv4(const std::string& text)
+{
+    if (std::count(text.begin(), text.end(), '.') != 3)
+        return false;
+
+    size_t start = 0;
+    for (int i = 0; i < 4; ++i)
+    {
+        size_t end = text.find('.', start);
+        if (end == std::string::npos)
+            end = text.size();
+
+        if (end <= start || end - start > 3)
+            return false;
+
+        int value = 0;
+        for (size_t j = start; j < end; ++j)
+        {
+            unsigned char c = static_cast<unsigned char>(text[j]);
+            if (!std::isdigit(c))
+                return false;
+            value = value * 10 + (c - '0');
+            if (value > 255)
+                return false;
+        }
+
+        start = end + 1;
+    }
+
+    return start == text.size() + 1;
+}
+
+
+bool looksLikeIPv6(const std::string& text)
+{
+    if (text.find(':') == std::string::npos)
+        return false;
+
+    std::array<uint8_t, 16> buffer{};
+    int res = inet_pton(AF_INET6, text.c_str(), buffer.data());
+    return res == 1;
+}
+
+
+bool looksLikeDomain(const std::string& text)
+{
+    if (text.empty())
+        return false;
+    if (text.size() > 253)
+        return false;
+    if (text.find('.') == std::string::npos)
+        return false;
+    if (text.find("..") != std::string::npos)
+        return false;
+
+    size_t start = 0;
+    while (start < text.size())
+    {
+        size_t dot = text.find('.', start);
+        size_t length = (dot == std::string::npos) ? text.size() - start : dot - start;
+        if (length == 0 || length > 63)
+            return false;
+
+        for (size_t i = 0; i < length; ++i)
+        {
+            unsigned char c = static_cast<unsigned char>(text[start + i]);
+            if (!(std::isalnum(c) || c == '-'))
+                return false;
+        }
+
+        if (dot == std::string::npos)
+            break;
+        start = dot + 1;
+    }
+
+    return true;
+}
+
+
+uint16_t inferQueryType(const std::string& payload)
+{
+    if (looksLikeIPv4(payload))
+        return 1;
+    if (looksLikeIPv6(payload))
+        return 28;
+    if (looksLikeDomain(payload))
+        return 5;
+    return 16;
+}
+
+}
+
 
 Client::Client(const std::string& dnsServerAdd, const std::string& domainToResolve, int port)
 : Dns(domainToResolve)
@@ -67,11 +167,14 @@ void Client::sendMessage(const std::string& msg)
     while(!m_msgQueue.empty() || m_moreMsgToGet)
     {
         std::string qname;
+        uint16_t qtype = 16;
+
         if(!m_msgQueue.empty())
         {
             std::string subdomain = addDotEvery62Chars(m_msgQueue.front());
             qname += subdomain;
             qname += ".";
+            qtype = inferQueryType(m_msgQueue.front());
             m_msgQueue.pop();
         }
         else
@@ -83,7 +186,7 @@ void Client::sendMessage(const std::string& msg)
 
         qname += m_domainToResolve;
         query.setQName(qname);
-        query.setQType(16);
+        query.setQType(qtype);
         query.setQClass(1);
 
         nbytes = query.code(buffer);
@@ -125,7 +228,7 @@ void Client::sendMessage(const std::string& msg)
         Response response;
         response.decode(buffer, received);
 
-        std::string rdata = response.getRdata();
+        std::string rdata = response.getRdataAsString();
         handleResponse(rdata);
 
         // TODO make it configurable - Resolvers usually accept ~5–20 qps per client without rate-limiting. Above that, some will throttle or blacklist.
