@@ -139,16 +139,19 @@ void Server::handleQuery(const Query& query, Response& response)
 
     // std::cout << "domainName " << domainName << std::endl;
     
-    if (domainName.empty()) 
+    if (domainName.empty())
     {
         // cout << "[-] Domain not in scope !" << endl;
 
         response.setID( query.getID() );
+        response.setQdCount(1);
+        response.setAnCount(0);
+        response.setNsCount(0);
         response.setName( query.getQName() );
         response.setType( query.getQType() );
         response.setClass( query.getQClass() );
         response.setRCode(Response::NameError);
-        response.setRdLength(1); // null label
+        response.setRdLength(0);
     }
     else 
     {

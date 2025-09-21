@@ -65,34 +65,44 @@ void Response::decode(const char* buffer, int size)
     decode_hdr(buffer);
     buffer += HDR_OFFSET;
 
+    m_rdata.clear();
+    m_rdLength = 0;
+    m_ttl = 0;
+
     // query
     std::string respDom;
-    decode_domain(buffer, respDom, begin, end);
-    m_name = respDom;
-    m_type = get16bits(buffer);
-    m_class = get16bits(buffer);
+    if (m_qdCount > 0)
+    {
+        decode_domain(buffer, respDom, begin, end);
+        m_name = respDom;
+        m_type = get16bits(buffer);
+        m_class = get16bits(buffer);
+    }
 
     // answer
-    decode_domain(buffer, respDom, begin, end);
-    m_name = respDom;
-    uint type_ = get16bits(buffer);
-    uint class_ = get16bits(buffer);
-    m_ttl = get32bits(buffer);
+    if (m_anCount > 0)
+    {
+        decode_domain(buffer, respDom, begin, end);
+        m_name = respDom;
+        uint type_ = get16bits(buffer);
+        uint class_ = get16bits(buffer);
+        m_ttl = get32bits(buffer);
 
-    if(type_ == 16)
-    {
-        m_rdLength = get16bits(buffer);
-        // skip la size ?
-        buffer++;
-        for (int i = 0; i < m_rdLength; i++) 
+        if(type_ == 16)
         {
-            char c = *buffer++;
-            m_rdata.append(1, c);
+            m_rdLength = get16bits(buffer);
+            // skip la size ?
+            buffer++;
+            for (int i = 0; i < m_rdLength && buffer < end; i++)
+            {
+                char c = *buffer++;
+                m_rdata.append(1, c);
+            }
         }
-    }
-    else
-    {
-        // std::cout << "TODO: decode type diff than txt" << std::endl;
+        else
+        {
+            // std::cout << "TODO: decode type diff than txt" << std::endl;
+        }
     }
 }
 
@@ -105,18 +115,24 @@ int Response::code(char* buffer)
     buffer += HDR_OFFSET;
 
     // Code Question section
-    code_domain(buffer, m_name);
-    put16bits(buffer, m_type);
-    put16bits(buffer, m_class);
+    if (m_qdCount > 0)
+    {
+        code_domain(buffer, m_name);
+        put16bits(buffer, m_type);
+        put16bits(buffer, m_class);
+    }
 
     // Code Answer section
-    put16bits(buffer, 49164);
-    // code_domain(buffer, m_name);
-    put16bits(buffer, m_type);
-    put16bits(buffer, m_class);
-    put32bits(buffer, m_ttl);
-    put16bits(buffer, m_rdLength);
-    code_domain(buffer, m_rdata);
+    if (m_anCount > 0)
+    {
+        put16bits(buffer, 49164);
+        // code_domain(buffer, m_name);
+        put16bits(buffer, m_type);
+        put16bits(buffer, m_class);
+        put32bits(buffer, m_ttl);
+        put16bits(buffer, m_rdLength);
+        code_domain(buffer, m_rdata);
+    }
 
     int size = buffer - bufferBegin;
     log_buffer(bufferBegin, size);

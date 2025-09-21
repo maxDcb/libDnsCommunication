@@ -38,6 +38,16 @@ else()
 endif()
 
 
+add_executable(nameErrorResponseTest "name_error_response_test.cpp" )
+set_property(TARGET nameErrorResponseTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
+
+if(WIN32)
+        target_link_libraries(nameErrorResponseTest Dnscommunication)
+else()
+        target_link_libraries(nameErrorResponseTest Dnscommunication pthread)
+endif()
+
+
 add_executable(messageTest "message_test.cpp" )
 set_property(TARGET messageTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 
