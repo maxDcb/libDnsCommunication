@@ -155,7 +155,19 @@ void Server::handleQuery(const Query& query, Response& response)
         // cout << "[+] Domain in scope !" << endl;
 
         response.setRCode(Response::Ok);
-        response.setRdLength(domainName.size()+2); // + initial label length & null label
+
+        std::string rawRdata = domainName;
+        rawRdata.erase(std::remove(rawRdata.begin(), rawRdata.end(), '.'), rawRdata.end());
+
+        size_t rdLength = 0;
+        for (size_t offset = 0; offset < rawRdata.size();)
+        {
+            size_t chunk = std::min<size_t>(255, rawRdata.size() - offset);
+            rdLength += chunk + 1; // chunk length + length octet
+            offset += chunk;
+        }
+
+        response.setRdLength(static_cast<uint>(rdLength));
 
         response.setID( query.getID() );
         response.setQdCount(1);
@@ -163,7 +175,7 @@ void Server::handleQuery(const Query& query, Response& response)
         response.setName( query.getQName() );
         response.setType( query.getQType() );
         response.setClass( query.getQClass() );
-        response.setRdata(domainName);
+        response.setRdata(rawRdata);
     }
 
     // text = "Resolver::process()";

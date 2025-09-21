@@ -1,5 +1,6 @@
 #include <iostream>
 #include <sstream>
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <set>
@@ -65,6 +66,8 @@ void Response::decode(const char* buffer, int size)
     decode_hdr(buffer);
     buffer += HDR_OFFSET;
 
+    m_rdata.clear();
+
     // query
     std::string respDom;
     decode_domain(buffer, respDom, begin, end);
@@ -79,20 +82,45 @@ void Response::decode(const char* buffer, int size)
     uint class_ = get16bits(buffer);
     m_ttl = get32bits(buffer);
 
-    if(type_ == 16)
+    m_type = type_;
+    m_class = class_;
+
+    if (type_ == 16)
     {
         m_rdLength = get16bits(buffer);
-        // skip la size ?
-        buffer++;
-        for (int i = 0; i < m_rdLength; i++) 
+
+        size_t remainingPacket = static_cast<size_t>(end - buffer);
+        size_t bytesToRead = std::min<size_t>(m_rdLength, remainingPacket);
+        const char* rdataEnd = buffer + bytesToRead;
+
+        while (buffer < rdataEnd)
         {
-            char c = *buffer++;
-            m_rdata.append(1, c);
+            uint8_t txtLength = static_cast<uint8_t>(*buffer++);
+            size_t available = static_cast<size_t>(rdataEnd - buffer);
+            size_t toCopy = std::min<size_t>(txtLength, available);
+
+            if (toCopy > 0)
+            {
+                m_rdata.append(buffer, toCopy);
+            }
+
+            buffer += toCopy;
+
+            if (toCopy < txtLength)
+            {
+                buffer = rdataEnd;
+                break;
+            }
         }
+
+        buffer = rdataEnd;
     }
     else
     {
-        // std::cout << "TODO: decode type diff than txt" << std::endl;
+        uint16_t rdLength = get16bits(buffer);
+        m_rdLength = rdLength;
+        size_t toSkip = std::min<size_t>(rdLength, static_cast<size_t>(end - buffer));
+        buffer += toSkip;
     }
 }
 
@@ -115,8 +143,35 @@ int Response::code(char* buffer)
     put16bits(buffer, m_type);
     put16bits(buffer, m_class);
     put32bits(buffer, m_ttl);
-    put16bits(buffer, m_rdLength);
-    code_domain(buffer, m_rdata);
+
+    char* rdlengthPtr = buffer;
+    buffer += 2;
+
+    uint requestedRdLength = m_rdLength;
+    uint rdlength = 0;
+    const char* dataPtr = m_rdata.data();
+    size_t remaining = m_rdata.size();
+
+    while (remaining > 0)
+    {
+        size_t chunkLen = std::min<size_t>(255, remaining);
+        *buffer++ = static_cast<char>(chunkLen);
+        std::memcpy(buffer, dataPtr, chunkLen);
+        buffer += chunkLen;
+        dataPtr += chunkLen;
+        remaining -= chunkLen;
+        rdlength += static_cast<uint>(chunkLen + 1);
+    }
+
+    if (rdlength == 0 && requestedRdLength > 0)
+    {
+        *buffer++ = 0;
+        rdlength = 1;
+    }
+
+    rdlengthPtr[0] = static_cast<char>((rdlength & 0xFF00) >> 8);
+    rdlengthPtr[1] = static_cast<char>(rdlength & 0x00FF);
+    m_rdLength = rdlength;
 
     int size = buffer - bufferBegin;
     log_buffer(bufferBegin, size);

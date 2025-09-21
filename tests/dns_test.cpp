@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <string>
 
@@ -8,6 +9,22 @@
 #include "dnsPacker.hpp"
 
 using namespace dns;
+
+static unsigned int calcTxtRdLength(const std::string& data)
+{
+    if (data.empty())
+        return 0;
+
+    unsigned int length = 0;
+    for (size_t offset = 0; offset < data.size();)
+    {
+        size_t chunk = std::min<size_t>(255, data.size() - offset);
+        length += static_cast<unsigned int>(chunk + 1);
+        offset += chunk;
+    }
+
+    return length;
+}
 
 class ClientEx : public Client {
 public:
@@ -47,7 +64,7 @@ int main() {
 
     Response response;
     response.setRCode(Response::Ok);
-    response.setRdLength(serverHex.size()+2);
+    response.setRdLength(calcTxtRdLength(serverHex));
     response.setID(query.getID());
     response.setQdCount(1);
     response.setAnCount(1);
