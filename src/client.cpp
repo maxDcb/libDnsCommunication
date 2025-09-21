@@ -245,8 +245,10 @@ void Client::sendMessage(const std::string& msg)
                 (m_moreMsgToGet ? std::string("true") : std::string("false")));
 
         dns::debug::log("Client::sendMessage",
-                        "Applying inter-query delay of 1000 ms to avoid flooding");
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                        "Applying inter-query delay of 100 ms to avoid flooding");
+      
+         // TODO make it configurable - Resolvers usually accept ~5–20 qps per client without rate-limiting. Above that, some will throttle or blacklist.
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         dns::debug::log(
             "Client::sendMessage",
