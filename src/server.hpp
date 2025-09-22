@@ -38,7 +38,7 @@ private:
 
     void handleQuery(const Query& query, Response& response);
 
-    static const int BUFFER_SIZE = 1024;
+    static const int BUFFER_SIZE = 4096;
 
     int m_port;
     struct sockaddr_in m_address;

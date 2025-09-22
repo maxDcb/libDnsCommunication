@@ -244,6 +244,10 @@ void Server::handleQuery(const Query& query, Response& response)
             std::to_string(
                 static_cast<unsigned long long>(m_msgQueue.size())));
 
+
+    splitPacket(query.getQType());
+
+
     string domainName = "";
     if (endsWith(qName, m_domainToResolve))
     {

@@ -38,7 +38,7 @@ public:
     void sendMessage(const std::string& msg);
     
 private:
-    static const int BUFFER_SIZE = 1024;
+    static const int BUFFER_SIZE = 4096;
 
     struct sockaddr_in m_address;
     int m_sockfd;

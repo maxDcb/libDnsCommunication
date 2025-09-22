@@ -53,6 +53,7 @@ void Client::sendMessage(const std::string& msg)
                 std::to_string(static_cast<unsigned long long>(msg.size())) +
                 " bytes");
         setMsg(msg);
+        splitPacket(5);
     }
     else
     {

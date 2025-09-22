@@ -37,10 +37,50 @@ Dns::~Dns()
 #undef min
 void Dns::setMsg(const std::string& msg)
 {
+    dns::debug::log("Dns::setMsg",
+        "Preparing message of " + std::to_string(msg.size()) + " bytes" );
+
     const std::lock_guard<std::mutex> lock(m_mutex);
 
-    dns::debug::log("Dns::setMsg",
-                    "Preparing message of " + std::to_string(msg.size()) +
+    m_msg = msg;
+
+}
+
+void Dns::splitPacket(int qType)
+{
+    if(m_msg.empty())
+        return;
+
+    int maxMessageSize;
+
+    switch (qType)
+    {
+        case 1: // A
+        {
+            maxMessageSize = 0;
+            break;
+        }
+        case 28: // AAAA
+        {
+            maxMessageSize = 0;
+            break;
+        }
+        case 15: // MX
+            maxMessageSize = m_maxMessageSize;
+            break;
+        case 5:  // CNAME
+        case 2:  // NS
+        case 12: // PTR
+            maxMessageSize = m_maxMessageSize;
+            break;
+        case 16: // TXT
+        default:
+            maxMessageSize = 1024;
+            break;
+    }
+
+    dns::debug::log("Dns::splitPacket",
+                    "Preparing message of " + std::to_string(m_msg.size()) +
                         " bytes for domain '" + m_domainToResolve + "'");
 
     std::string sessionId;
@@ -49,17 +89,17 @@ void Dns::setMsg(const std::string& msg)
         sessionId = generateRandomString(5);
     } while (m_msgReceived.find(sessionId) != m_msgReceived.end());
 
-    dns::debug::log("Dns::setMsg",
+    dns::debug::log("Dns::splitPacket",
                     "Generated session identifier '" + sessionId + "'");
 
     json packetJson;
-    packetJson["m"] = msg;
+    packetJson["m"] = m_msg;
     packetJson["s"] = sessionId;
     packetJson["n"] = 1;
     packetJson["k"] = 0;
     std::string packet = packetJson.dump();
 
-    if(packet.size() > m_maxMessageSize)
+    if(packet.size() > maxMessageSize)
     {
         std::vector<json> messages;
         packetJson["m"] = "";
@@ -67,27 +107,27 @@ void Dns::setMsg(const std::string& msg)
         packetJson["k"] = 0;
         packet = packetJson.dump();
 
-        int maxLength = m_maxMessageSize - static_cast<int>(packet.size());
-        size_t totalLen = msg.length();
+        int maxLength = maxMessageSize - static_cast<int>(packet.size());
+        size_t totalLen = m_msg.length();
         size_t startPos = 0;
 
-        dns::debug::log("Dns::setMsg",
+        dns::debug::log("Dns::splitPacket",
                         "Message exceeds max payload size (" +
                             std::to_string(packet.size()) + " > " +
-                            std::to_string(m_maxMessageSize) +
+                            std::to_string(maxMessageSize) +
                             "), fragmenting with chunk capacity " +
                             std::to_string(maxLength) + " bytes");
         while (startPos < totalLen)
         {
             size_t chunkSize = std::min<size_t>(maxLength, totalLen - startPos);
-            std::string tmp = msg.substr(startPos, chunkSize);
+            std::string tmp = m_msg.substr(startPos, chunkSize);
             packetJson["m"] = tmp;
             messages.push_back(packetJson);
             startPos += chunkSize;
         }
 
         size_t nbMaxMessage = messages.size();
-        dns::debug::log("Dns::setMsg",
+        dns::debug::log("Dns::splitPacket",
                         "Enqueued " + std::to_string(nbMaxMessage) +
                             " fragment(s) for session '" + sessionId + "'");
         for(size_t i = 0; i < nbMaxMessage; ++i)
@@ -99,7 +139,7 @@ void Dns::setMsg(const std::string& msg)
             m_msgQueue.push(msgHex);
 
             dns::debug::log(
-                "Dns::setMsg",
+                "Dns::splitPacket",
                 "Fragment " + std::to_string(i + 1) + "/" +
                     std::to_string(nbMaxMessage) + " for session '" +
                     sessionId + "' raw=" + std::to_string(chunkData.size()) +
@@ -115,14 +155,16 @@ void Dns::setMsg(const std::string& msg)
         m_msgQueue.push(msgHex);
 
         dns::debug::log(
-            "Dns::setMsg",
+            "Dns::splitPacket",
             "Message fits in a single fragment for session '" + sessionId +
-                "' raw=" + std::to_string(msg.size()) + " bytes encoded=" +
+                "' raw=" + std::to_string(m_msg.size()) + " bytes encoded=" +
                 std::to_string(msgHex.size()) +
                 " hex chars; queue size=" +
                 std::to_string(static_cast<unsigned long long>(
                     m_msgQueue.size())));
     }
+
+    m_msg.clear();
 }
 
 void Dns::addReceivedQName(const std::string& qname)
@@ -248,11 +290,12 @@ std::string Dns::getMsg()
 
     lock.unlock();
 
-    dns::debug::log(
-        "Dns::getMsg",
-        "Processing " +
-            std::to_string(static_cast<unsigned long long>(qnameTmp.size())) +
-            " queued QNAME(s)");
+    if(qnameTmp.size()>0)
+        dns::debug::log(
+            "Dns::getMsg",
+            "Processing " +
+                std::to_string(static_cast<unsigned long long>(qnameTmp.size())) +
+                " queued QNAME(s)");
 
     for(int i=0; i<qnameTmp.size(); i++)
         handleResponse(qnameTmp[i]);
@@ -299,6 +342,7 @@ std::string Dns::getMsg()
     }
     else
     {
+        if(m_msgReceived.size()>0)
         dns::debug::log(
             "Dns::getMsg",
             "No complete message available; pending sessions=" +

@@ -50,10 +50,12 @@ public:
 protected:
     void handleResponse(const std::string& rdata);
     void addReceivedQName(const std::string& qname);
+    void splitPacket(int qType);
     
     std::string m_domainToResolve;
     int m_maxMessageSize;
 
+    std::string m_msg;
     std::queue<std::string> m_msgQueue;
 
     bool m_moreMsgToGet;
