@@ -37,7 +37,17 @@ if(DNS_ENABLE_LOGGING)
 endif()
 if(WIN32)
 else()
-	target_link_libraries(${PROJECT_NAME} pthread)
+        target_link_libraries(${PROJECT_NAME} pthread)
+endif()
+
+
+add_executable(publicDnsClient "examples/public_dns_client.cpp" )
+set_property(TARGET publicDnsClient PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
+
+if(WIN32)
+        target_link_libraries(publicDnsClient Dnscommunication)
+else()
+        target_link_libraries(publicDnsClient Dnscommunication pthread)
 endif()
 
 

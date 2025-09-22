@@ -273,41 +273,73 @@ void Server::handleQuery(const Query& query, Response& response)
 
     // std::cout << "domainName " << domainName << std::endl;
 
+    response.setID(query.getID());
+    response.setRecursionDesired(query.isRecursionDesired());
+    response.setName(query.getQName());
+    response.setType(query.getQType());
+    response.setClass(query.getQClass());
+    response.setTtl(0);
+    response.setQdCount(1);
+    response.setNsCount(0);
+    response.setArCount(0);
+
     if (domainName.empty())
     {
-        // cout << "[-] Domain not in scope !" << endl;
-
         dns::debug::log(
             "Server::handleQuery",
             "Domain '" + qName + "' not in scope; sending NameError");
 
-        response.setID( query.getID() );
-        response.setName( query.getQName() );
-        response.setType( query.getQType() );
-        response.setClass( query.getQClass() );
+        response.clearAnswer();
+        response.setAnCount(0);
         response.setRCode(Response::NameError);
-        response.setRdLength(1); // null label
     }
     else
     {
-        // cout << "[+] Domain in scope !" << endl;
-
         dns::debug::log(
             "Server::handleQuery",
             "Responding with payload '" + domainName + "' (" +
                 std::to_string(static_cast<unsigned long long>(domainName.size())) +
                 " bytes)");
 
-        response.setRCode(Response::Ok);
-        response.setRdLength(domainName.size()+2); // + initial label length & null label
-
-        response.setID( query.getID() );
-        response.setQdCount(1);
         response.setAnCount(1);
-        response.setName( query.getQName() );
-        response.setType( query.getQType() );
-        response.setClass( query.getQClass() );
-        response.setRdata(domainName);
+        response.setRCode(Response::Ok);
+        response.setMxPreference(0);
+
+        switch (query.getQType())
+        {
+            case 1: // A
+            {
+                std::string hex = domainName;
+                if (hex.size() < 8)
+                    hex.append(8 - hex.size(), '0');
+                if (hex.size() > 8)
+                    hex.resize(8);
+                response.setRdata(hex);
+                break;
+            }
+            case 28: // AAAA
+            {
+                std::string hex = domainName;
+                if (hex.size() < 32)
+                    hex.append(32 - hex.size(), '0');
+                if (hex.size() > 32)
+                    hex.resize(32);
+                response.setRdata(hex);
+                break;
+            }
+            case 15: // MX
+                response.setRdata(domainName);
+                break;
+            case 5:  // CNAME
+            case 2:  // NS
+            case 12: // PTR
+                response.setRdata(domainName);
+                break;
+            case 16: // TXT
+            default:
+                response.setRdata(domainName);
+                break;
+        }
     }
 
     // text = "Resolver::process()";

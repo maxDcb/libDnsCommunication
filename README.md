@@ -6,6 +6,7 @@ It encodes arbitrary data into DNS TXT records so a client and server can exchan
 ## Features
 - UDP DNS client and server implementation.
 - Message fragmentation and reassembly using JSON and hex encoding.
+- TXT, CNAME, MX, A and AAAA records handled consistently for both encoding and decoding.
 - Random subdomain generation and utility helpers.
 - Cross-platform support for Linux and Windows.
 
@@ -66,6 +67,17 @@ You can test locally without a real DNS server:
 If the message is received correctly, the client will print `EXPECTATION OK` and exit with code `0`.
 
 This setup is useful for **CI pipelines** or quick validation without relying on external resolvers.
+
+### Querying a public resolver
+
+The repository also provides a tiny helper that sends a raw DNS query to any resolver and decodes the answer with the library:
+
+```bash
+cmake --build build --target publicDnsClient
+./publicDnsClient 8.8.8.8 example.com TXT
+```
+
+Any RR type supported by the library can be supplied as the optional third argument (for example `CNAME`, `MX`, `AAAA`, …). The tool prints the textual view of the first answer as well as the raw hexadecimal payload, which makes it easy to verify interoperability with public DNS services.
 
 ---
 

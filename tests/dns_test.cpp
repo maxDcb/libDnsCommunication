@@ -47,10 +47,12 @@ int main() {
 
     Response response;
     response.setRCode(Response::Ok);
-    response.setRdLength(serverHex.size()+2);
     response.setID(query.getID());
+    response.setRecursionDesired(query.isRecursionDesired());
     response.setQdCount(1);
     response.setAnCount(1);
+    response.setNsCount(0);
+    response.setArCount(0);
     response.setName(query.getQName());
     response.setType(query.getQType());
     response.setClass(query.getQClass());
