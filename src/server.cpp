@@ -285,7 +285,7 @@ void Server::handleQuery(const Query& query, Response& response)
     response.setTtl(0);
     response.setQdCount(1);
     response.setNsCount(0);
-    response.setArCount(0);
+    response.enableEdns0(Response::kDefaultEdnsUdpPayloadSize);
 
     if (domainName.empty())
     {

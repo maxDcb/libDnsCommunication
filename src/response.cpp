@@ -82,6 +82,11 @@ Response::Response()
 , m_ttl(0)
 , m_rdLength(0)
 , m_mxPreference(0)
+, m_includeEdns0(false)
+, m_ednsUdpPayloadSize(kDefaultEdnsUdpPayloadSize)
+, m_ednsExtendedRcode(0)
+, m_ednsVersion(0)
+, m_ednsFlags(0)
 {}
 
 Response::~Response() = default;
@@ -176,6 +181,11 @@ void Response::decode(const char* buffer, int size)
     m_answerType = 0;
     m_answerClass = 0;
     m_ttl = 0;
+    m_includeEdns0 = false;
+    m_ednsUdpPayloadSize = kDefaultEdnsUdpPayloadSize;
+    m_ednsExtendedRcode = 0;
+    m_ednsVersion = 0;
+    m_ednsFlags = 0;
 
     if (size < static_cast<int>(HDR_OFFSET))
         return;
@@ -247,13 +257,38 @@ void Response::decode(const char* buffer, int size)
 
     for (uint i = 0; i < m_arCount && cursor < end; ++i)
     {
-        skip_record(cursor, begin, end);
+        std::string name;
+        decode_domain(cursor, name, begin, end);
+
+        uint16_t type = safe_get16(cursor);
+        uint16_t klass = safe_get16(cursor);
+        uint32_t ttl = safe_get32(cursor);
+        uint16_t rdlength = safe_get16(cursor);
+
+        if (cursor + rdlength > end)
+        {
+            rdlength = static_cast<uint16_t>(std::max<long>(0, end - cursor));
+        }
+
+        if (type == 41)
+        {
+            m_includeEdns0 = true;
+            m_ednsUdpPayloadSize = std::max<uint16_t>(static_cast<uint16_t>(512), klass);
+            m_ednsExtendedRcode = static_cast<uint8_t>((ttl >> 24) & 0xFF);
+            m_ednsVersion = static_cast<uint8_t>((ttl >> 16) & 0xFF);
+            m_ednsFlags = static_cast<uint16_t>(ttl & 0xFFFF);
+        }
+
+        cursor += rdlength;
     }
 }
 
 int Response::code(char* buffer)
 {
     char* bufferBegin = buffer;
+
+    uint16_t originalArCount = m_arCount;
+    m_arCount = m_includeEdns0 ? 1 : 0;
 
     code_hdr(buffer);
     buffer += HDR_OFFSET;
@@ -283,6 +318,23 @@ int Response::code(char* buffer)
             buffer += rdata.size();
         }
     }
+
+    if (m_includeEdns0)
+    {
+        *buffer++ = 0;
+        put16bits(buffer, 41);
+
+        uint16_t payloadSize = std::max<uint16_t>(static_cast<uint16_t>(512), m_ednsUdpPayloadSize);
+        put16bits(buffer, payloadSize);
+
+        uint32_t ttl = (static_cast<uint32_t>(m_ednsExtendedRcode) << 24) |
+                       (static_cast<uint32_t>(m_ednsVersion) << 16) |
+                       static_cast<uint32_t>(m_ednsFlags);
+        put32bits(buffer, ttl);
+        put16bits(buffer, 0);
+    }
+
+    m_arCount = originalArCount;
 
     int size = static_cast<int>(buffer - bufferBegin);
     log_buffer(bufferBegin, size);
@@ -595,5 +647,27 @@ void Response::skip_record(const char*& buffer, const char* begin, const char* e
         buffer = end;
     else
         buffer += rdlen;
+}
+
+void Response::enableEdns0(uint16_t udpPayloadSize)
+{
+    m_includeEdns0 = true;
+    if (udpPayloadSize < 512)
+        udpPayloadSize = 512;
+    m_ednsUdpPayloadSize = udpPayloadSize;
+    m_ednsExtendedRcode = 0;
+    m_ednsVersion = 0;
+    m_ednsFlags = 0;
+    m_arCount = 1;
+}
+
+void Response::disableEdns0()
+{
+    m_includeEdns0 = false;
+    m_ednsUdpPayloadSize = kDefaultEdnsUdpPayloadSize;
+    m_ednsExtendedRcode = 0;
+    m_ednsVersion = 0;
+    m_ednsFlags = 0;
+    m_arCount = 0;
 }
 

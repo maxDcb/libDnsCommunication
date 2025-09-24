@@ -39,7 +39,7 @@ void Client::sendMessage(const std::string& msg)
     query.setQdCount(1);
     query.setAnCount(0);
     query.setNsCount(0);
-    query.setArCount(0);
+    query.enableEdns0(Query::kDefaultEdnsUdpPayloadSize);
 
     dns::debug::log(
         "Client::sendMessage",

@@ -122,7 +122,7 @@ int main(int argc, char** argv)
         query.setQdCount(1);
         query.setAnCount(0);
         query.setNsCount(0);
-        query.setArCount(0);
+        query.enableEdns0(dns::Query::kDefaultEdnsUdpPayloadSize);
 
         std::string wire = query.encode();
         const int qlen = static_cast<int>(wire.size());

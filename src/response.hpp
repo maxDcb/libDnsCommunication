@@ -16,6 +16,8 @@ public:
 
     enum Code { Ok=0, FormatError, ServerFailure, NameError, NotImplemented, Refused };
 
+    static constexpr uint16_t kDefaultEdnsUdpPayloadSize = 4096;
+
     Response();
     ~Response();
 
@@ -49,7 +51,12 @@ public:
     const std::string& getName() const { return m_answerName; }
     uint getType() const { return m_answerType; }
     uint getClass() const { return m_answerClass; }
-    
+
+    void enableEdns0(uint16_t udpPayloadSize = kDefaultEdnsUdpPayloadSize);
+    void disableEdns0();
+    bool hasEdns0() const { return m_includeEdns0; }
+    uint16_t getEdnsUdpPayloadSize() const { return m_ednsUdpPayloadSize; }
+
 private:
     std::string m_questionName;
     uint m_questionType;
@@ -64,6 +71,12 @@ private:
     std::vector<uint8_t> m_rdataBinary;
     std::vector<std::string> m_txtStrings;
     uint16_t m_mxPreference;
+
+    bool m_includeEdns0;
+    uint16_t m_ednsUdpPayloadSize;
+    uint8_t m_ednsExtendedRcode;
+    uint8_t m_ednsVersion;
+    uint16_t m_ednsFlags;
 
     void decode_domain(const char*& buffer, std::string& domain, const char* begin, const char* end);
     void code_domain(char*& buffer, const std::string& domain);

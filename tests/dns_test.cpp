@@ -52,7 +52,7 @@ int main() {
     response.setQdCount(1);
     response.setAnCount(1);
     response.setNsCount(0);
-    response.setArCount(0);
+    response.enableEdns0(dns::Response::kDefaultEdnsUdpPayloadSize);
     response.setName(query.getQName());
     response.setType(query.getQType());
     response.setClass(query.getQClass());
