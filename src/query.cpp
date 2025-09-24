@@ -1,10 +1,10 @@
 #include <iostream>
+#include <algorithm>
 #include <sstream>
 
 #include "query.hpp"
 
-#include <stdio.h>
-#include <string.h>
+#include <cstring>
 
 using namespace std;
 using namespace dns;
@@ -24,7 +24,7 @@ Query::~Query()
 }
 
 
-string Query::asString() const  
+string Query::asString() const
 {
     ostringstream text;
     text << endl << "QUERY { ";
@@ -38,21 +38,34 @@ string Query::asString() const
 }
 
 
-int Query::code(char* buffer)  
+std::string Query::encode() const
 {
-    char* bufferBegin = buffer;
+    size_t labelCount = m_qName.empty() ? 1 :
+        static_cast<size_t>(std::count(m_qName.begin(), m_qName.end(), '.') + 1);
+    size_t qnameSize = m_qName.size() + labelCount + 1;
+    size_t totalSize = HDR_OFFSET + qnameSize + 4; // qtype + qclass
 
-    code_hdr(buffer);
-    buffer += HDR_OFFSET;
+    std::string buffer(totalSize, '\0');
 
-    encode_qname(buffer, m_qName);
+    Query* self = const_cast<Query*>(this);
 
-    put16bits(buffer, m_qType);
-    put16bits(buffer, m_qClass);
+    char* headerPtr = buffer.data();
+    self->code_hdr(headerPtr);
 
-    int size = buffer - bufferBegin;
+    char* ptr = buffer.data() + HDR_OFFSET;
+    self->encode_qname(ptr, m_qName);
+    self->put16bits(ptr, m_qType);
+    self->put16bits(ptr, m_qClass);
 
-    return size;
+    buffer.resize(static_cast<size_t>(ptr - buffer.data()));
+    return buffer;
+}
+
+int Query::code(char* buffer)
+{
+    std::string encoded = encode();
+    std::memcpy(buffer, encoded.data(), encoded.size());
+    return static_cast<int>(encoded.size());
 }
 
 

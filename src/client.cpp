@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cctype>
 #include <string_view>
+#include <vector>
 #include <errno.h>
 #ifdef __linux__
 #include <unistd.h>
@@ -30,7 +31,7 @@ Client::~Client()
 
 void Client::sendMessage(const std::string& msg)
 {
-    char buffer[BUFFER_SIZE];
+    std::vector<char> recvBuffer(BUFFER_SIZE);
     int nbytes = 0;
 
     Query query;
@@ -151,7 +152,8 @@ void Client::sendMessage(const std::string& msg)
         query.setQType(16);
         query.setQClass(1);
 
-        nbytes = query.code(buffer);
+        std::string wire = query.encode();
+        nbytes = static_cast<int>(wire.size());
 
         dns::debug::log(
             "Client::sendMessage",
@@ -159,7 +161,7 @@ void Client::sendMessage(const std::string& msg)
                 " bytes for QNAME '" + qname + "'");
 
         int t_len = sizeof(serv_addr);
-        int req = sendto(sockfd, buffer, nbytes, 0, (struct sockaddr*) &serv_addr, t_len);
+        int req = sendto(sockfd, wire.data(), nbytes, 0, (struct sockaddr*) &serv_addr, t_len);
         if(req < 1)
         {
             dns::debug::log("Client::sendMessage",
@@ -206,9 +208,9 @@ void Client::sendMessage(const std::string& msg)
         }
 
 #ifdef __linux__
-        int received = recvfrom(sockfd, &buffer, BUFFER_SIZE, 0, (struct sockaddr*) &serv_addr, (socklen_t*) &t_len);
+        int received = recvfrom(sockfd, recvBuffer.data(), BUFFER_SIZE, 0, (struct sockaddr*) &serv_addr, (socklen_t*) &t_len);
 #elif _WIN32
-        int received = recvfrom(sockfd, buffer, BUFFER_SIZE, 0, (struct sockaddr*) &serv_addr, (socklen_t*) &t_len);
+        int received = recvfrom(sockfd, recvBuffer.data(), BUFFER_SIZE, 0, (struct sockaddr*) &serv_addr, (socklen_t*) &t_len);
 #endif
 
         auto afterRecv = std::chrono::steady_clock::now();
@@ -220,7 +222,7 @@ void Client::sendMessage(const std::string& msg)
                 dns::debug::formatDuration(afterRecv - afterSend));
 
         Response response;
-        response.decode(buffer, received);
+        response.decode(recvBuffer.data(), received);
 
         std::string rdata = response.getRdata();
 

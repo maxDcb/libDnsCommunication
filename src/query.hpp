@@ -15,6 +15,7 @@ public:
     Query();
     ~Query();
 
+    std::string encode() const;
     int code(char* buffer);
 
     void decode(const char* buffer, int size);

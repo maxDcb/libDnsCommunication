@@ -124,10 +124,10 @@ int main(int argc, char** argv)
         query.setNsCount(0);
         query.setArCount(0);
 
-        char sendBuf[512];
-        const int qlen = query.code(sendBuf);
+        std::string wire = query.encode();
+        const int qlen = static_cast<int>(wire.size());
 
-        int sent = sendto(sock, sendBuf, qlen, 0, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+        int sent = sendto(sock, wire.data(), qlen, 0, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
 #ifdef _WIN32
         if (sent == SOCKET_ERROR)
             throw std::runtime_error("sendto() failed");

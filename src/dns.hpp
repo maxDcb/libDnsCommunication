@@ -56,11 +56,14 @@ protected:
     int m_maxMessageSize;
 
     std::string m_msg;
+    std::string m_msgRaw;
     std::queue<std::string> m_msgQueue;
 
     bool m_moreMsgToGet;
     std::unordered_map<std::string, Packet> m_msgReceived;
     std::vector<std::string> m_qnameReceived;
+
+    std::string m_partialResponseBuffer;
 
 private:
     std::mutex m_mutex;

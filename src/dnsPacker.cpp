@@ -10,17 +10,17 @@ namespace dns
 {
 
 
-std::string stringToHex(const std::string& input) 
+std::string stringToHex(const std::string& input)
 {
-    std::string result = "";
-    for (char c : input) 
+    std::ostringstream ss;
+    ss << std::hex << std::uppercase << std::setfill('0');
+
+    for (unsigned char c : input)
     {
-        int ascii = static_cast<int>(c);
-        std::stringstream ss;
-        ss << std::hex << std::uppercase << ascii;
-        result += ss.str();
+        ss << std::setw(2) << static_cast<int>(c);
     }
-    return result;
+
+    return ss.str();
 }
 
 

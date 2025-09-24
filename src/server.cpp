@@ -314,20 +314,24 @@ void Server::handleQuery(const Query& query, Response& response)
             case 1: // A
             {
                 std::string hex = domainName;
-                if (hex.size() < 8)
-                    hex.append(8 - hex.size(), '0');
+                if (hex.size() % 2 != 0)
+                    hex.insert(hex.begin(), '0');
                 if (hex.size() > 8)
                     hex.resize(8);
+                else if (hex.size() < 8)
+                    hex.append(8 - hex.size(), '0');
                 response.setRdata(hex);
                 break;
             }
             case 28: // AAAA
             {
                 std::string hex = domainName;
-                if (hex.size() < 32)
-                    hex.append(32 - hex.size(), '0');
+                if (hex.size() % 2 != 0)
+                    hex.insert(hex.begin(), '0');
                 if (hex.size() > 32)
                     hex.resize(32);
+                else if (hex.size() < 32)
+                    hex.append(32 - hex.size(), '0');
                 response.setRdata(hex);
                 break;
             }
