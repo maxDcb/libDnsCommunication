@@ -43,7 +43,7 @@ protected:
     std::pair<std::string, std::string> getMsg();
 
     void handleDataReceived(const std::string& rdata, const std::string& clientId);
-    void splitPacket(int qType, const std::string& clientId);
+    void splitPacket(int qType, const std::string& clientId, uint16_t udpPayloadHint = 0);
     
     std::string m_domainToResolve;
     int m_maxMessageSize;

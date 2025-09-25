@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
 #include <string_view>
 
 #include "nlohmann/json.hpp"
@@ -13,6 +14,44 @@
 
 using namespace std;
 using namespace dns;
+
+namespace
+{
+constexpr size_t kTxtResponseSafetyMargin = 512;
+
+size_t computeMaxHexPayload(size_t udpPayload)
+{
+    if (udpPayload <= kTxtResponseSafetyMargin)
+        return 0;
+
+    size_t budget = udpPayload - kTxtResponseSafetyMargin;
+    size_t maxHex = budget;
+    while (maxHex > 0)
+    {
+        size_t txtOverhead = (maxHex + 254) / 255;
+        if (maxHex + txtOverhead <= budget)
+            return maxHex;
+        --maxHex;
+    }
+    return 0;
+}
+
+int computeTxtJsonLimit(size_t udpPayload)
+{
+    size_t maxHex = computeMaxHexPayload(udpPayload);
+    if (maxHex == 0)
+        return 0;
+
+    size_t allowedJson = maxHex / 2;
+    if (allowedJson == 0)
+        return 0;
+
+    if (allowedJson > static_cast<size_t>(std::numeric_limits<int>::max()))
+        return std::numeric_limits<int>::max();
+
+    return static_cast<int>(allowedJson);
+}
+} // namespace
 
 using json = nlohmann::json;
 
@@ -97,7 +136,7 @@ void Dns::setMsg(const std::string& msg, const std::string& clientId)
  *       from m_msgToSend for the given client.
  */
 
-void Dns::splitPacket(int qType, const std::string& clientId)
+void Dns::splitPacket(int qType, const std::string& clientId, uint16_t udpPayloadHint)
 {
     if(m_msgToSend[clientId].empty())
         return;
@@ -126,8 +165,27 @@ void Dns::splitPacket(int qType, const std::string& clientId)
             break;
         case 16: // TXT
         default:
+        {
             maxMessageSize = m_maxMessageSize;
+            if (udpPayloadHint > 0)
+            {
+                int txtLimit = computeTxtJsonLimit(udpPayloadHint);
+                if (txtLimit > 0)
+                {
+                    int originalLimit = maxMessageSize;
+                    maxMessageSize = std::max(maxMessageSize, txtLimit);
+                    if (maxMessageSize != originalLimit)
+                    {
+                        dns::debug::log(
+                            "Dns::splitPacket",
+                            "Expanded TXT fragment capacity using EDNS UDP payload hint " +
+                                std::to_string(udpPayloadHint) +
+                                " -> max JSON size " + std::to_string(maxMessageSize));
+                    }
+                }
+            }
             break;
+        }
     }
 
     dns::debug::log("Dns::splitPacket",

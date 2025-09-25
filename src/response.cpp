@@ -177,6 +177,8 @@ void Response::decode(const char* buffer, int size)
     m_answerClass = 0;
     m_ttl = 0;
 
+    resetEdns();
+
     if (size < static_cast<int>(HDR_OFFSET))
         return;
 
@@ -247,7 +249,12 @@ void Response::decode(const char* buffer, int size)
 
     for (uint i = 0; i < m_arCount && cursor < end; ++i)
     {
-        skip_record(cursor, begin, end);
+        const char* recordStart = cursor;
+        if (!decodeEdns(cursor, end))
+        {
+            cursor = recordStart;
+            skip_record(cursor, begin, end);
+        }
     }
 }
 
@@ -282,6 +289,11 @@ int Response::code(char* buffer)
             std::memcpy(buffer, rdata.data(), rdata.size());
             buffer += rdata.size();
         }
+    }
+
+    if (hasEdns())
+    {
+        encodeEdns(buffer);
     }
 
     int size = static_cast<int>(buffer - bufferBegin);

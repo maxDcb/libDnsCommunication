@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace dns 
 {
@@ -65,6 +67,21 @@ public:
     void setNsCount(uint count) { m_nsCount = count; }
     void setArCount(uint count) { m_arCount = count; }
 
+    void resetEdns();
+    void enableEdns(uint16_t udpPayloadSize = 4096);
+    void disableEdns();
+    bool hasEdns() const { return m_edns.present; }
+    void setEdnsUdpPayloadSize(uint16_t value) { m_edns.udpPayloadSize = value; }
+    uint16_t getEdnsUdpPayloadSize() const { return m_edns.udpPayloadSize; }
+    void setEdnsExtendedRcode(uint8_t value) { m_edns.extendedRcode = value; }
+    uint8_t getEdnsExtendedRcode() const { return m_edns.extendedRcode; }
+    void setEdnsVersion(uint8_t value) { m_edns.version = value; }
+    uint8_t getEdnsVersion() const { return m_edns.version; }
+    void setEdnsFlags(uint16_t value) { m_edns.flags = value; }
+    uint16_t getEdnsFlags() const { return m_edns.flags; }
+    void setEdnsOptions(const std::vector<uint8_t>& options) { m_edns.data = options; }
+    const std::vector<uint8_t>& getEdnsOptions() const { return m_edns.data; }
+
 protected:
     Message(Type type);
     ~Message();
@@ -86,6 +103,18 @@ protected:
     uint m_nsCount;
     uint m_arCount;
 
+    struct EdnsFields
+    {
+        bool present;
+        uint16_t udpPayloadSize;
+        uint8_t extendedRcode;
+        uint8_t version;
+        uint16_t flags;
+        std::vector<uint8_t> data;
+    };
+
+    EdnsFields m_edns;
+
     virtual std::string asString() const ;
 
     void decode_hdr(const char* buffer) ;
@@ -94,11 +123,15 @@ protected:
     int get16bits(const char*& buffer) ;
     int get32bits(const char*& buffer) ;
 
-    void put16bits(char*& buffer, uint value) ;
-    void put32bits(char*& buffer, ulong value) ;
+    void put16bits(char*& buffer, uint value) const;
+    void put32bits(char*& buffer, ulong value) const;
 
     void log_buffer(const char* buffer, int size) ;
-    
+
+    void skipDomain(const char*& buffer, const char* end);
+    void encodeEdns(char*& buffer) const;
+    bool decodeEdns(const char*& buffer, const char* end);
+
 private:
     static const uint QR_MASK = 0x8000;
     static const uint OPCODE_MASK = 0x7800;

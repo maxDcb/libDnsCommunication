@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdint>
 #include <string_view>
 
 #include <errno.h>
@@ -21,6 +22,8 @@
 
 namespace
 {
+constexpr uint16_t kMaxServerUdpPayload = 4096;
+
 std::string endpointToString(const sockaddr_in& addr)
 {
     char buffer[INET_ADDRSTRLEN] = {0};
@@ -428,6 +431,11 @@ void Server::prepareResponse(const Query& query, Response& response)
     string qName = query.getQName();
 
     string dataToSend = "";
+    uint16_t negotiatedSize = 0;
+    if (query.hasEdns())
+    {
+        negotiatedSize = std::min<uint16_t>(query.getEdnsUdpPayloadSize(), kMaxServerUdpPayload);
+    }
     if (endsWith(qName, m_domainToResolve))
     {
         //data1.data2.data3.id.domain
@@ -452,7 +460,7 @@ void Server::prepareResponse(const Query& query, Response& response)
         // ask data
         if(qName.contains(m_secretKeyClientAskData))
         {
-            splitPacket(query.getQType(), id);
+            splitPacket(query.getQType(), id, negotiatedSize);
             
             // data available
             if(!m_msgQueue[id].empty())
@@ -503,7 +511,25 @@ void Server::prepareResponse(const Query& query, Response& response)
     response.setTtl(0);
     response.setQdCount(1);
     response.setNsCount(0);
-    response.setArCount(0);
+    response.resetEdns();
+
+    if (negotiatedSize > 0)
+    {
+        response.enableEdns(negotiatedSize);
+        response.setArCount(1);
+        response.setEdnsVersion(0);
+        response.setEdnsExtendedRcode(0);
+        response.setEdnsFlags(query.getEdnsFlags() & 0x8000U);
+
+        dns::debug::log(
+            "Server::prepareResponse",
+            "Negotiated EDNS UDP payload size=" + std::to_string(negotiatedSize));
+    }
+    else
+    {
+        response.disableEdns();
+        response.setArCount(0);
+    }
 
     if (dataToSend.empty())
     {

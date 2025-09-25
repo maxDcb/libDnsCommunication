@@ -1,6 +1,8 @@
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
+#include <cstring>
 
 #ifdef __linux__
 
@@ -38,6 +40,8 @@ Message::Message(Type type)
     m_anCount=0;
     m_nsCount=0;
     m_arCount=0;
+
+    resetEdns();
 }
 
 
@@ -148,7 +152,7 @@ int Message::get32bits(const char*& buffer)
 }
 
 
-void Message::put16bits(char*& buffer, uint value)  
+void Message::put16bits(char*& buffer, uint value) const
 {
     buffer[0] = (value & 0xFF00) >> 8;
     buffer[1] = value & 0xFF;
@@ -156,11 +160,141 @@ void Message::put16bits(char*& buffer, uint value)
 }
 
 
-void Message::put32bits(char*& buffer, ulong value)  
+void Message::put32bits(char*& buffer, ulong value) const
 {
     buffer[0] = (value >> 24) & 0xFF;
     buffer[1] = (value >> 16) & 0xFF;
     buffer[2] = (value >> 8) & 0xFF;
     buffer[3] = value & 0xFF;
     buffer += 4;
+}
+
+void Message::resetEdns()
+{
+    m_edns.present = false;
+    m_edns.udpPayloadSize = 512;
+    m_edns.extendedRcode = 0;
+    m_edns.version = 0;
+    m_edns.flags = 0;
+    m_edns.data.clear();
+}
+
+void Message::enableEdns(uint16_t udpPayloadSize)
+{
+    m_edns.present = true;
+    m_edns.udpPayloadSize = udpPayloadSize;
+    if (m_arCount == 0)
+        m_arCount = 1;
+}
+
+void Message::disableEdns()
+{
+    resetEdns();
+}
+
+void Message::skipDomain(const char*& buffer, const char* end)
+{
+    while (buffer < end)
+    {
+        uint8_t length = static_cast<uint8_t>(*buffer++);
+        if (length == 0)
+            return;
+
+        if ((length & 0xC0) == 0xC0)
+        {
+            if (buffer < end)
+                ++buffer;
+            return;
+        }
+
+        if (buffer + length > end)
+        {
+            buffer = end;
+            return;
+        }
+
+        buffer += length;
+    }
+}
+
+void Message::encodeEdns(char*& buffer) const
+{
+    if (!m_edns.present)
+        return;
+
+    *buffer++ = 0;
+    put16bits(buffer, 41);
+    put16bits(buffer, m_edns.udpPayloadSize);
+
+    uint32_t ttl = (static_cast<uint32_t>(m_edns.extendedRcode) << 24) |
+                   (static_cast<uint32_t>(m_edns.version) << 16) |
+                   static_cast<uint32_t>(m_edns.flags);
+    put32bits(buffer, ttl);
+
+    uint16_t rdlength = static_cast<uint16_t>(m_edns.data.size());
+    put16bits(buffer, rdlength);
+    if (rdlength > 0)
+    {
+        std::memcpy(buffer, m_edns.data.data(), rdlength);
+        buffer += rdlength;
+    }
+}
+
+bool Message::decodeEdns(const char*& buffer, const char* end)
+{
+    skipDomain(buffer, end);
+    if (buffer >= end)
+    {
+        buffer = end;
+        return false;
+    }
+
+    if (buffer + 2 > end)
+    {
+        buffer = end;
+        return false;
+    }
+    uint16_t type = static_cast<uint16_t>(get16bits(buffer));
+
+    if (buffer + 2 > end)
+    {
+        buffer = end;
+        return false;
+    }
+    uint16_t udpPayload = static_cast<uint16_t>(get16bits(buffer));
+
+    if (buffer + 4 > end)
+    {
+        buffer = end;
+        return false;
+    }
+    uint32_t ttl = static_cast<uint32_t>(get32bits(buffer));
+
+    if (buffer + 2 > end)
+    {
+        buffer = end;
+        return false;
+    }
+    uint16_t rdlength = static_cast<uint16_t>(get16bits(buffer));
+
+    size_t remaining = buffer < end ? static_cast<size_t>(end - buffer) : 0U;
+    size_t available = std::min(static_cast<size_t>(rdlength), remaining);
+
+    if (type == 41)
+    {
+        m_edns.present = true;
+        m_edns.udpPayloadSize = udpPayload;
+        m_edns.extendedRcode = static_cast<uint8_t>((ttl >> 24) & 0xFF);
+        m_edns.version = static_cast<uint8_t>((ttl >> 16) & 0xFF);
+        m_edns.flags = static_cast<uint16_t>(ttl & 0xFFFF);
+        m_edns.data.assign(buffer, buffer + available);
+    }
+
+    buffer += available;
+    if (available < rdlength)
+    {
+        buffer = end;
+    }
+
+    return type == 41;
 }

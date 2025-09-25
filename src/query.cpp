@@ -38,7 +38,7 @@ string Query::asString() const
 }
 
 
-int Query::code(char* buffer)  
+int Query::code(char* buffer)
 {
     char* bufferBegin = buffer;
 
@@ -50,6 +50,11 @@ int Query::code(char* buffer)
     put16bits(buffer, m_qType);
     put16bits(buffer, m_qClass);
 
+    if (hasEdns())
+    {
+        encodeEdns(buffer);
+    }
+
     int size = buffer - bufferBegin;
 
     return size;
@@ -58,15 +63,23 @@ int Query::code(char* buffer)
 
 void Query::decode(const char* buffer, int size)  
 {
-    // log_buffer(buffer, size);
+    const char* begin = buffer;
+    const char* end = buffer + size;
 
     decode_hdr(buffer);
-    buffer += HDR_OFFSET;
-    
-    decode_qname(buffer);
 
-    m_qType = get16bits(buffer);
-    m_qClass = get16bits(buffer);
+    const char* cursor = begin + HDR_OFFSET;
+
+    decode_qname(cursor);
+
+    m_qType = get16bits(cursor);
+    m_qClass = get16bits(cursor);
+
+    resetEdns();
+    for (uint i = 0; i < m_arCount && cursor < end; ++i)
+    {
+        decodeEdns(cursor, end);
+    }
 }
 
 

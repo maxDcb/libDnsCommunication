@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdint>
 #include <string_view>
 #include <errno.h>
 #ifdef __linux__
@@ -14,6 +15,11 @@
 
 #include "client.hpp"
 #include "debugLog.hpp"
+
+namespace
+{
+constexpr uint16_t kDefaultClientUdpPayload = 4096;
+}
 
 using namespace std;
 using namespace dns;
@@ -88,7 +94,12 @@ void Client::sendMessage(const std::string& msg)
     query.setQdCount(1);
     query.setAnCount(0);
     query.setNsCount(0);
-    query.setArCount(0);
+    query.resetEdns();
+    query.enableEdns(kDefaultClientUdpPayload);
+    query.setArCount(1);
+    query.setEdnsVersion(0);
+    query.setEdnsExtendedRcode(0);
+    query.setEdnsFlags(0);
 
     dns::debug::log("Client::sendMessage", "Preparing transmission to DNS server " + m_dnsServerAdd + ":" + std::to_string(m_port));
 
@@ -334,7 +345,12 @@ std::string Client::requestMessage()
     query.setQdCount(1);
     query.setAnCount(0);
     query.setNsCount(0);
-    query.setArCount(0);
+    query.resetEdns();
+    query.enableEdns(kDefaultClientUdpPayload);
+    query.setArCount(1);
+    query.setEdnsVersion(0);
+    query.setEdnsExtendedRcode(0);
+    query.setEdnsFlags(0);
 
     dns::debug::log("Client::requestMessage", "Preparing transmission to DNS server " + m_dnsServerAdd + ":" + std::to_string(m_port));
 
