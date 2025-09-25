@@ -1,70 +1,90 @@
+#include <algorithm>
 #include <cassert>
 #include <string>
+#include <utility>
 
-#include "server.hpp"
-#include "client.hpp"
-#include "query.hpp"
-#include "response.hpp"
+#include "dns.hpp"
 #include "dnsPacker.hpp"
 
 using namespace dns;
 
-class ClientEx : public Client {
+namespace {
+
+class DnsHarness : public Dns {
 public:
-    using Client::Client;
-    std::string popMessage() { auto m = m_msgQueue.front(); m_msgQueue.pop(); return m; }
-    void handle(const std::string& r) { handleDataReceived(r); }
+    DnsHarness(const std::string& domain, const std::string& id)
+        : Dns(domain, id) {}
+
+    void queueMessage(const std::string& msg, const std::string& clientId, int qType)
+    {
+        setMsg(msg, clientId);
+        splitPacket(qType, clientId);
+    }
+
+    bool hasQueuedFragments(const std::string& clientId) const
+    {
+        auto it = m_msgQueue.find(clientId);
+        return it != m_msgQueue.end() && !it->second.empty();
+    }
+
+    std::string popFragment(const std::string& clientId)
+    {
+        auto& queue = m_msgQueue[clientId];
+        std::string fragment = queue.front();
+        queue.pop();
+        return fragment;
+    }
+
+    void ingest(const std::string& payload, const std::string& clientId)
+    {
+        handleDataReceived(payload, clientId);
+    }
+
+    std::pair<std::string, std::string> takeComplete()
+    {
+        return getMsg();
+    }
 };
 
-class ServerEx : public Server {
-public:
-    using Server::Server;
-    void addQName(const std::string& q) { stackPotentialData(q); }
-    std::string popMessage() { auto m = m_msgQueue.front(); m_msgQueue.pop(); return m; }
-};
+} // namespace
 
-int main() {
+int main()
+{
     const std::string domain = "example.com";
+    const std::string clientIdentity = "cli";
+    const std::string serverIdentity = "serv";
     const std::string clientMsg = "ping from client";
     const std::string serverMsg = "pong from server";
 
-    ServerEx server(0, domain);
-    server.setMsg(serverMsg);
+    DnsHarness clientHarness(domain, "aa.");
+    DnsHarness serverHarness(domain, "");
 
-    ClientEx client("127.0.0.1", domain, 0);
-    client.setMsg(clientMsg);
+    // Client prepares data destined for the server (encoded inside CNAME queries)
+    clientHarness.queueMessage(clientMsg, serverIdentity, 5);
 
-    std::string qHex = client.popMessage();
-    std::string qname = addDotEvery62Chars(qHex) + "." + domain;
+    while (clientHarness.hasQueuedFragments(serverIdentity))
+    {
+        std::string fragmentHex = clientHarness.popFragment(serverIdentity);
+        std::string qnameData = addDotEvery62Chars(fragmentHex);
+        serverHarness.ingest(qnameData, clientIdentity);
+    }
 
-    Query query;
-    query.setID(0);
-    query.setQName(qname);
-    query.setQType(16);
-    query.setQClass(1);
+    auto [serverClientId, serverReceived] = serverHarness.takeComplete();
+    assert(serverClientId == clientIdentity);
+    assert(serverReceived == clientMsg);
 
-    std::string serverHex = server.popMessage();
+    // Server prepares data destined for the client (delivered via TXT responses)
+    serverHarness.queueMessage(serverMsg, clientIdentity, 16);
 
-    Response response;
-    response.setRCode(Response::Ok);
-    response.setID(query.getID());
-    response.setRecursionDesired(query.isRecursionDesired());
-    response.setQdCount(1);
-    response.setAnCount(1);
-    response.setNsCount(0);
-    response.setArCount(0);
-    response.setName(query.getQName());
-    response.setType(query.getQType());
-    response.setClass(query.getQClass());
-    response.setRdata(serverHex);
+    while (serverHarness.hasQueuedFragments(clientIdentity))
+    {
+        std::string responsePayload = serverHarness.popFragment(clientIdentity);
+        clientHarness.ingest(responsePayload, serverIdentity);
+    }
 
-    server.addQName(qname);
-    std::string serverReceived = server.getMsg();
+    auto [clientServerId, clientReceived] = clientHarness.takeComplete();
+    assert(clientServerId == serverIdentity);
+    assert(clientReceived == serverMsg);
 
-    client.handle(response.getRdata());
-    std::string clientReceived = client.getMsg();
-
-    if (serverReceived != clientMsg) return 1;
-    if (clientReceived != serverMsg) return 1;
     return 0;
 }

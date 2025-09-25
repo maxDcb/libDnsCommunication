@@ -1,5 +1,4 @@
 #include <cassert>
-#include <string>
 
 #include "response.hpp"
 
