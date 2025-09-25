@@ -13,13 +13,13 @@ class ClientEx : public Client {
 public:
     using Client::Client;
     std::string popMessage() { auto m = m_msgQueue.front(); m_msgQueue.pop(); return m; }
-    void handle(const std::string& r) { handleResponse(r); }
+    void handle(const std::string& r) { handleDataReceived(r); }
 };
 
 class ServerEx : public Server {
 public:
     using Server::Server;
-    void addQName(const std::string& q) { addReceivedQName(q); }
+    void addQName(const std::string& q) { stackPotentialData(q); }
     std::string popMessage() { auto m = m_msgQueue.front(); m_msgQueue.pop(); return m; }
 };
 

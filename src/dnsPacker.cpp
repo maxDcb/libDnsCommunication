@@ -73,6 +73,21 @@ std::string generateRandomString(int length)
 }
 
 
+std::string generateRandomLowcaseString(int length) 
+{
+    const std::string charset = "0123456789abcdefghijklmnopqrstuvwxyz";
+    static std::mt19937 rng{std::random_device{}()};
+    std::uniform_int_distribution<std::size_t> dist(0, charset.size() - 1);
+    std::string result;
+    result.reserve(length);
+    for (int i = 0; i < length; ++i)
+    {
+        result += charset[dist(rng)];
+    }
+    return result;
+}
+
+
 bool startsWith(const std::string& str, const std::string& prefix) 
 {
     if (str.length() < prefix.length()) 

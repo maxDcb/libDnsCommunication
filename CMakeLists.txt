@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24 FATAL_ERROR)
 project(Dnscommunication VERSION 0.0.0 LANGUAGES CXX C)
 
 set(CMAKE_BUILD_TYPE Release)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 23)
 
 option(DNS_ENABLE_LOGGING "Enable debug logging output" ON)
 

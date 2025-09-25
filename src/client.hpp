@@ -36,6 +36,7 @@ public:
     ~Client();
 
     void sendMessage(const std::string& msg);
+    std::string requestMessage();
     
 private:
     static const int BUFFER_SIZE = 4096;

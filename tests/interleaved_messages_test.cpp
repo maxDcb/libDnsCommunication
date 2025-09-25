@@ -12,7 +12,7 @@ public:
     using Dns::Dns;
     bool hasMessage() const { return !m_msgQueue.empty(); }
     std::string popMessage() { auto m = m_msgQueue.front(); m_msgQueue.pop(); return m; }
-    void handle(const std::string& r) { handleResponse(r); }
+    void handle(const std::string& r) { handleDataReceived(r); }
 };
 
 int main() {
