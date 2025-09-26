@@ -334,8 +334,11 @@ void Server::run()
                 " qclass=" + std::to_string(query.getQClass()));
 
 
-        // add the qname received to a list that will be put togheter after to form a message    
-        m_qnameReceived.push_back(qname);
+        // add the qname received to a list that will be put togheter after to form a message
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_qnameReceived.push_back(qname);
+        }
 
         Response response;
         auto handleStart = std::chrono::steady_clock::now();
@@ -346,13 +349,18 @@ void Server::run()
         
         auto afterHandle = std::chrono::steady_clock::now();
 
+        size_t pendingQueues = 0;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            pendingQueues = m_msgQueue.size();
+        }
+
         dns::debug::log(
             "Server::run",
             "prepareResponse completed in " +
                 dns::debug::formatDuration(afterHandle - handleStart) +
                 "; outbound fragment queue size=" +
-                std::to_string(
-                    static_cast<unsigned long long>(m_msgQueue.size())));
+                std::to_string(static_cast<unsigned long long>(pendingQueues)));
 
         memset(buffer, 0, BUFFER_SIZE);
         nbytes = response.code(buffer);
@@ -453,18 +461,27 @@ void Server::prepareResponse(const Query& query, Response& response)
         if(qName.contains(m_secretKeyClientAskData))
         {
             splitPacket(query.getQType(), id);
-            
-            // data available
-            if(!m_msgQueue[id].empty())
-            {
-                dataToSend = m_msgQueue[id].front();
-                m_msgQueue[id].pop();
 
+            // data available
+            size_t remainingFragments = 0;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                auto& queue = m_msgQueue[id];
+                if(!queue.empty())
+                {
+                    dataToSend = queue.front();
+                    queue.pop();
+                    remainingFragments = queue.size();
+                }
+            }
+
+            if(!dataToSend.empty())
+            {
                 dns::debug::log(
                     "Server::prepareResponse",
                     "Using queued fragment for response; remaining fragments=" +
                         std::to_string(static_cast<unsigned long long>(
-                            m_msgQueue[id].size())) +
+                            remainingFragments)) +
                         " payload='" + dataToSend + "'");
             }
             // no data
