@@ -5,6 +5,7 @@
 
 #include "dns.hpp"
 #include "dnsPacker.hpp"
+#include "query.hpp"
 
 using namespace dns;
 
@@ -85,6 +86,33 @@ int main()
     auto [clientServerId, clientReceived] = clientHarness.takeComplete();
     assert(clientServerId == serverIdentity);
     assert(clientReceived == serverMsg);
+
+    // Regression test: ensure QNAME encoding handles 62-byte labels without
+    // introducing an empty label between the fragment and the domain.
+    const std::string sixtyTwoHex(62, 'A');
+    std::string qnameData = addDotEvery62Chars(sixtyTwoHex);
+    assert(!qnameData.empty());
+    assert(qnameData.back() != '.');
+
+    Query encodedQuery;
+    encodedQuery.setID(0);
+    encodedQuery.setQdCount(1);
+    encodedQuery.setAnCount(0);
+    encodedQuery.setNsCount(0);
+    encodedQuery.setArCount(0);
+    encodedQuery.setQName(qnameData + "." + domain);
+    encodedQuery.setQType(5);
+    encodedQuery.setQClass(1);
+
+    char buffer[512];
+    int encodedLength = encodedQuery.code(buffer);
+
+    Query decodedQuery;
+    decodedQuery.decode(buffer, encodedLength);
+
+    assert(decodedQuery.getQName() == qnameData + "." + domain);
+    assert(decodedQuery.getQType() == 5);
+    assert(decodedQuery.getQClass() == 1);
 
     return 0;
 }

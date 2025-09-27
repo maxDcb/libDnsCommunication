@@ -38,20 +38,25 @@ std::string hexToString(const std::string& hex)
 }
 
 
-std::string addDotEvery62Chars(const std::string& str) 
+std::string addDotEvery62Chars(const std::string& str)
 {
     std::string result;
     int count = 0;
 
-    for (char ch : str) 
+    for (char ch : str)
     {
         result.push_back(ch);
         count++;
-        if (count == 62) 
+        if (count == 62)
         {
             result.push_back('.');
             count = 0;
         }
+    }
+
+    if (!result.empty() && result.back() == '.')
+    {
+        result.pop_back();
     }
 
     return result;
