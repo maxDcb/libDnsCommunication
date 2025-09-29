@@ -1,18 +1,21 @@
 #pragma once
 
+#include <algorithm>
 #include <cctype>
-#include <algorithm> 
+#include <map>
 
 
-namespace dns 
+namespace dns
 {
 
-struct Packet 
+struct Packet
 {
     std::string data;
-    bool isFull;
+    bool isFull = false;
     std::string id;
     std::string clientId;
+    int expectedCount = -1;
+    std::map<int, std::string> fragments;
 };
 
 // https://github.com/iagox86/dnscat2

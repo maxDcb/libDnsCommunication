@@ -83,6 +83,8 @@ int main()
         }
     }
 
+    std::reverse(interleavedFragments.begin(), interleavedFragments.end());
+
     for (const auto& [clientId, payload] : interleavedFragments)
     {
         serverHarness.ingest(payload, clientId);

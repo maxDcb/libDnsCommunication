@@ -344,10 +344,58 @@ void Dns::handleDataReceived(const std::string& rdata, const std::string& client
             packet.id = session;
         if(packet.clientId.empty() && !clientId.empty())
             packet.clientId = clientId;
-        packet.data.append(payload);
-        packet.isFull = (k == n-1);
 
-        accumulatedSize = packet.data.size();
+        if (packet.expectedCount < 0)
+        {
+            packet.expectedCount = n;
+        }
+        else if (packet.expectedCount != n)
+        {
+            dns::debug::log(
+                "Dns::handleResponse",
+                "Fragment count mismatch for session '" + session +
+                    "' (expected " + std::to_string(packet.expectedCount) +
+                    ", got " + std::to_string(n) + ")");
+            packet.expectedCount = n;
+        }
+
+        packet.fragments[k] = payload;
+
+        accumulatedSize = 0;
+        for (const auto& fragment : packet.fragments)
+        {
+            accumulatedSize += fragment.second.size();
+        }
+
+        bool allPresent =
+            packet.expectedCount > 0 &&
+            packet.fragments.size() == static_cast<size_t>(packet.expectedCount);
+
+        if (allPresent)
+        {
+            int expectedIndex = 0;
+            for (const auto& entry : packet.fragments)
+            {
+                if (entry.first != expectedIndex)
+                {
+                    allPresent = false;
+                    break;
+                }
+                ++expectedIndex;
+            }
+        }
+
+        if (allPresent)
+        {
+            packet.data.clear();
+            packet.data.reserve(accumulatedSize);
+            for (const auto& entry : packet.fragments)
+            {
+                packet.data.append(entry.second);
+            }
+        }
+
+        packet.isFull = allPresent;
         packetFull = packet.isFull;
 
         m_moreMsgToGet = false;
