@@ -27,5 +27,11 @@ int main() {
     assert(a.size() == 8);
     assert(b.size() == 8);
     assert(a != b);
+
+    const std::string binaryData("\0\x01\x05\x0A\x10\x1F\x7F\x80\xFF", 9);
+    std::string hex = stringToHex(binaryData);
+    assert(hex.size() == binaryData.size() * 2);
+    std::string roundTrip = hexToString(hex);
+    assert(roundTrip == binaryData);
     return 0;
 }

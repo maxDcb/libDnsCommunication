@@ -54,6 +54,11 @@ public:
     uint getNsCount() const { return m_nsCount; }
     uint getArCount() const { return m_arCount; }
 
+    bool isResponse() const { return m_qr != 0; }
+    bool isRecursionDesired() const { return m_rd != 0; }
+
+    void setRecursionDesired(bool value) { m_rd = value ? 1U : 0U; }
+
     void setID(uint id) { m_id = id; }
     void setQdCount(uint count) { m_qdCount = count; }
     void setAnCount(uint count) { m_anCount = count; }
@@ -72,9 +77,9 @@ protected:
     uint m_aa;          // authoritive answer
     uint m_tc;          // truncated message
     uint m_rd;          // recursion desired
-    uint m_ra;
+    uint m_ra;          // recursion available
 
-    uint m_rcode;
+    uint m_rcode;       // response code
     
     uint m_qdCount;
     uint m_anCount;

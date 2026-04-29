@@ -10,17 +10,15 @@ namespace dns
 {
 
 
-std::string stringToHex(const std::string& input) 
+std::string stringToHex(const std::string& input)
 {
-    std::string result = "";
-    for (char c : input) 
+    std::ostringstream oss;
+    oss << std::hex << std::uppercase;
+    for (unsigned char c : input)
     {
-        int ascii = static_cast<int>(c);
-        std::stringstream ss;
-        ss << std::hex << std::uppercase << ascii;
-        result += ss.str();
+        oss << std::setw(2) << std::setfill('0') << static_cast<int>(c);
     }
-    return result;
+    return oss.str();
 }
 
 
@@ -38,20 +36,25 @@ std::string hexToString(const std::string& hex)
 }
 
 
-std::string addDotEvery62Chars(const std::string& str) 
+std::string addDotEvery62Chars(const std::string& str)
 {
     std::string result;
     int count = 0;
 
-    for (char ch : str) 
+    for (char ch : str)
     {
         result.push_back(ch);
         count++;
-        if (count == 62) 
+        if (count == 62)
         {
             result.push_back('.');
             count = 0;
         }
+    }
+
+    if (!result.empty() && result.back() == '.')
+    {
+        result.pop_back();
     }
 
     return result;
@@ -61,6 +64,21 @@ std::string addDotEvery62Chars(const std::string& str)
 std::string generateRandomString(int length) 
 {
     const std::string charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    static std::mt19937 rng{std::random_device{}()};
+    std::uniform_int_distribution<std::size_t> dist(0, charset.size() - 1);
+    std::string result;
+    result.reserve(length);
+    for (int i = 0; i < length; ++i)
+    {
+        result += charset[dist(rng)];
+    }
+    return result;
+}
+
+
+std::string generateRandomLowcaseString(int length) 
+{
+    const std::string charset = "0123456789abcdefghijklmnopqrstuvwxyz";
     static std::mt19937 rng{std::random_device{}()};
     std::uniform_int_distribution<std::size_t> dist(0, charset.size() - 1);
     std::string result;

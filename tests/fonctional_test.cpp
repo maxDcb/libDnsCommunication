@@ -161,16 +161,17 @@ int main(int argc, char** argv) {
                 "breeze blossom moonlight tranquility radiant whisper serendipity horizon";
 
             server.launch();
-            server.setMsg(server_test_msg.value_or(default_msg));
+            const std::string beaconId = "default";
+            server.setMessageToSend(server_test_msg.value_or(default_msg), beaconId);
 
             // Run for a bounded time (default to 5s if --run-seconds passed without value; here we require value)
             const int run_secs = server_run_seconds.value_or(5);
             auto end = std::chrono::steady_clock::now() + std::chrono::seconds(run_secs);
 
             while (std::chrono::steady_clock::now() < end) {
-                std::string result = server.getMsg();
+                auto [clientId, result] = server.getAvailableMessage();
                 if (!result.empty()) {
-                    std::cout << "[server] msg: " << result << std::endl;
+                    std::cout << "[server] client=" << clientId << " msg: " << result << std::endl;
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(200));
             }
@@ -191,10 +192,14 @@ int main(int argc, char** argv) {
             bool matched = !expect_eq.has_value(); // if no expectation, success if we get anything (or just complete)
 
             while (std::chrono::steady_clock::now() < deadline) {
-                std::string result = client.getMsg();
+                std::string result = client.requestMessage();
                 if (!result.empty()) {
                     std::cout << "[client] msg: " << result << std::endl;
                     if (expect_eq && result == *expect_eq) {
+                        matched = true;
+                        break;
+                    }
+                    if (!expect_eq) {
                         matched = true;
                         break;
                     }

@@ -1,58 +1,15 @@
-add_executable(testsDns "dns_test.cpp" )
-set_property(TARGET testsDns PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
+function(add_dns_test target)
+    add_executable(${target} ${ARGN})
+    set_property(TARGET ${target} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
+    target_link_libraries(${target} PRIVATE Dnscommunication)
+    if(NOT WIN32)
+        target_link_libraries(${target} PRIVATE pthread)
+    endif()
+endfunction()
 
-if(WIN32)
-        target_link_libraries(testsDns Dnscommunication)
-else()
-        target_link_libraries(testsDns Dnscommunication pthread)
-endif()
-
-
-add_executable(utilsTest "utils_test.cpp" )
-set_property(TARGET utilsTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
-
-if(WIN32)
-        target_link_libraries(utilsTest Dnscommunication)
-else()
-        target_link_libraries(utilsTest Dnscommunication pthread)
-endif()
-
-
-add_executable(fonctionalTest "fonctional_test.cpp" )
-set_property(TARGET fonctionalTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
-
-if(WIN32)
-        target_link_libraries(fonctionalTest Dnscommunication)
-else()
-        target_link_libraries(fonctionalTest Dnscommunication pthread)
-endif()
-
-
-add_executable(responseDecodeTest "response_decode_test.cpp" )
-set_property(TARGET responseDecodeTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
-
-if(WIN32)
-        target_link_libraries(responseDecodeTest Dnscommunication)
-else()
-        target_link_libraries(responseDecodeTest Dnscommunication pthread)
-endif()
-
-
-add_executable(messageTest "message_test.cpp" )
-set_property(TARGET messageTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
-
-if(WIN32)
-        target_link_libraries(messageTest Dnscommunication)
-else()
-        target_link_libraries(messageTest Dnscommunication pthread)
-endif()
-
-
-add_executable(interleavedTest "interleaved_messages_test.cpp" )
-set_property(TARGET interleavedTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
-
-if(WIN32)
-        target_link_libraries(interleavedTest Dnscommunication)
-else()
-        target_link_libraries(interleavedTest Dnscommunication pthread)
-endif()
+add_dns_test(dnsTest dns_test.cpp)
+add_dns_test(utilsTest utils_test.cpp)
+add_dns_test(fonctionalTest fonctional_test.cpp)
+add_dns_test(responseDecodeTest response_decode_test.cpp)
+add_dns_test(messageTest message_test.cpp)
+add_dns_test(interleavedTest interleaved_messages_test.cpp)

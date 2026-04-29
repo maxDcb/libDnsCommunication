@@ -35,33 +35,33 @@ class Dns
 {
 
 public:
-    Dns(const std::string& domain);
+    Dns(const std::string& domain, const std::string& id);
     ~Dns();
 
-    void setMsg(const std::string& msg);
-    std::string getMsg();
-
-    bool isMoreMsgToGet()
-    {
-        return m_moreMsgToGet;
-    }
-
-
 protected:
-    void handleResponse(const std::string& rdata);
-    void addReceivedQName(const std::string& qname);
+    void setMsg(const std::string& msg, const std::string& clientId);
+    std::pair<std::string, std::string> getMsg();
+
+    void handleDataReceived(const std::string& rdata, const std::string& clientId);
+    void splitPacket(int qType, const std::string& clientId);
     
     std::string m_domainToResolve;
     int m_maxMessageSize;
 
-    std::queue<std::string> m_msgQueue;
+    std::unordered_map<std::string, std::string> m_msgToSend;
+    std::unordered_map<std::string, std::queue<std::string>> m_msgQueue;
 
     bool m_moreMsgToGet;
-    std::unordered_map<std::string, Packet> m_msgReceived;
+    std::unordered_map<std::string, std::unordered_map<std::string, Packet>> m_msgReceived;
     std::vector<std::string> m_qnameReceived;
 
-private:
-    std::mutex m_mutex;
+    const std::string m_secretKeyClientAskData = "ask";
+    const std::string m_secretKeyClientKeepAlive = "hello";
+    const std::string m_secretKeyServerNoData = "noData";
+    const std::string m_secretKeyServerKeepAlive = "olleh";
+    const std::string m_secretKeyAck = "ack";
+
+    std::mutex m_mutex;    
 
 };
 

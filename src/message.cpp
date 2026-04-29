@@ -65,12 +65,13 @@ void Message::decode_hdr(const char* buffer)
     m_id = get16bits(buffer);
 
     uint fields = get16bits(buffer);
-    m_qr = fields & QR_MASK;
-    m_opcode = fields & OPCODE_MASK;
-    m_aa = fields & AA_MASK;
-    m_tc = fields & TC_MASK;
-    m_rd = fields & RD_MASK;
+    m_qr = (fields & QR_MASK) ? 1U : 0U;
+    m_opcode = (fields & OPCODE_MASK) >> 11;
+    m_aa = (fields & AA_MASK) ? 1U : 0U;
+    m_tc = (fields & TC_MASK) ? 1U : 0U;
+    m_rd = (fields & RD_MASK) ? 1U : 0U;
     m_ra = (fields & RA_MASK) >> 7;
+    m_rcode = fields & RCODE_MASK;
 
     m_qdCount = get16bits(buffer);
     m_anCount = get16bits(buffer);
@@ -83,13 +84,14 @@ void Message::code_hdr(char* buffer)
 {
     put16bits(buffer, m_id);
 
-    int fields = 0;
-    fields += (m_qr << 15);
-    // fields += (m_opcode << 14);
-    fields += (m_aa << 10);
-    fields += (m_tc << 9);
-    fields += (m_rd << 8);
-    fields += (m_ra << 7);
+    uint16_t fields = 0;
+    fields |= (m_qr & 0x1U) << 15;
+    fields |= (m_opcode & 0xFU) << 11;
+    fields |= (m_aa & 0x1U) << 10;
+    fields |= (m_tc & 0x1U) << 9;
+    fields |= (m_rd & 0x1U) << 8;
+    fields |= (m_ra & 0x1U) << 7;
+    fields |= (m_rcode & 0xFU);
     put16bits(buffer, fields);
 
     put16bits(buffer, m_qdCount);

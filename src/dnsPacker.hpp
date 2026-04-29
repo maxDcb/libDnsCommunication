@@ -1,17 +1,21 @@
 #pragma once
 
+#include <algorithm>
 #include <cctype>
-#include <algorithm> 
+#include <map>
 
 
-namespace dns 
+namespace dns
 {
 
-struct Packet 
+struct Packet
 {
     std::string data;
-    bool isFull;
+    bool isFull = false;
     std::string id;
+    std::string clientId;
+    int expectedCount = -1;
+    std::map<int, std::string> fragments;
 };
 
 // https://github.com/iagox86/dnscat2
@@ -36,7 +40,7 @@ std::string hexToString(const std::string& hex);
 std::string addDotEvery62Chars(const std::string& str);
 
 std::string generateRandomString(int length);
-
+std::string generateRandomLowcaseString(int length);
 
 bool startsWith(const std::string& str, const std::string& prefix);
 bool endsWith(const std::string& fullString, const std::string& ending);

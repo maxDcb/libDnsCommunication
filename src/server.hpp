@@ -33,12 +33,15 @@ public:
     void launch();
     void stop();
 
+    std::pair<std::string, std::string>  getAvailableMessage();
+    void setMessageToSend(const std::string& msg, const std::string& clientId);
+
 private:
     void run();
 
-    void handleQuery(const Query& query, Response& response);
+    void prepareResponse(const Query& query, Response& response);
 
-    static const int BUFFER_SIZE = 1024;
+    static const int BUFFER_SIZE = 4096;
 
     int m_port;
     struct sockaddr_in m_address;
