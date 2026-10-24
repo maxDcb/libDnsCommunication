@@ -83,6 +83,7 @@ Response::Response()
 , m_ttl(0)
 , m_rdLength(0)
 , m_mxPreference(0)
+, m_valid(false)
 {}
 
 Response::~Response() = default;
@@ -162,9 +163,7 @@ string Response::asString() const
 
 void Response::decode(const char* buffer, int size)
 {
-    const char* begin = buffer;
-    const char* end = buffer + size;
-
+    m_valid = false;
     m_questionName.clear();
     m_answerName.clear();
     m_rdata.clear();
@@ -178,8 +177,11 @@ void Response::decode(const char* buffer, int size)
     m_answerClass = 0;
     m_ttl = 0;
 
-    if (size < static_cast<int>(HDR_OFFSET))
+    if (buffer == nullptr || size < static_cast<int>(HDR_OFFSET))
         return;
+
+    const char* begin = buffer;
+    const char* end = buffer + size;
 
     decode_hdr(buffer);
     const char* cursor = begin + HDR_OFFSET;
@@ -250,6 +252,8 @@ void Response::decode(const char* buffer, int size)
     {
         skip_record(cursor, begin, end);
     }
+
+    m_valid = isResponse() && m_qdCount == 1 && !m_questionName.empty();
 }
 
 int Response::code(char* buffer)
@@ -332,7 +336,7 @@ void Response::decode_domain(const char*& buffer, std::string& domain,
         }
 
         ++cur;
-        if (cur + len > end) { buffer = end; return; }
+        if (cur + len >= end) { buffer = end; return; }
         domain.append(cur, len);
         cur += len;
         if (*cur != 0) domain.push_back('.');

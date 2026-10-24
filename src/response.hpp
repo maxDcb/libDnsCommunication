@@ -49,6 +49,7 @@ public:
     const std::string& getName() const { return m_answerName; }
     uint getType() const { return m_answerType; }
     uint getClass() const { return m_answerClass; }
+    bool isValid() const { return m_valid; }
     
 private:
     std::string m_questionName;
@@ -64,6 +65,7 @@ private:
     std::vector<uint8_t> m_rdataBinary;
     std::vector<std::string> m_txtStrings;
     uint16_t m_mxPreference;
+    bool m_valid;
 
     void decode_domain(const char*& buffer, std::string& domain, const char* begin, const char* end);
     void code_domain(char*& buffer, const std::string& domain);

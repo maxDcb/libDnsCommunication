@@ -35,17 +35,16 @@ public:
     Client(const std::string& dnsServerAdd, const std::string& domainToResolve, int port = 53);
     ~Client();
 
-    void sendMessage(const std::string& msg);
+    bool sendMessage(const std::string& msg);
     std::string requestMessage();
     
 private:
     static const int BUFFER_SIZE = 4096;
 
-    struct sockaddr_in m_address;
-    int m_sockfd;
-
     std::string m_dnsServerAdd;
     int m_port;
+    std::string m_activeOutboundMessage;
+    std::optional<FragmentIdentity> m_pendingServerAck;
 };
 
 }

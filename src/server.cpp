@@ -2,9 +2,11 @@
 #include <cstring>
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cctype>
 #include <string_view>
+#include <vector>
 
 #include <errno.h>
 
@@ -21,6 +23,70 @@
 
 namespace
 {
+struct ParsedClientName
+{
+    std::string clientId;
+    std::string data;
+    std::vector<std::string> labels;
+};
+
+std::vector<std::string> splitLabels(const std::string& value)
+{
+    std::vector<std::string> labels;
+    size_t start = 0;
+    while (start <= value.size())
+    {
+        const size_t dot = value.find('.', start);
+        const size_t end = dot == std::string::npos ? value.size() : dot;
+        if (end == start)
+            return {};
+        labels.push_back(value.substr(start, end - start));
+        if (dot == std::string::npos)
+            break;
+        start = dot + 1;
+    }
+    return labels;
+}
+
+bool parseClientName(const std::string& qname,
+                     const std::string& domain,
+                     ParsedClientName& parsed)
+{
+    if (domain.empty() || qname.size() <= domain.size() + 1)
+        return false;
+
+    const size_t domainOffset = qname.size() - domain.size();
+    if (qname[domainOffset - 1] != '.' ||
+        dns::str_tolower(qname.substr(domainOffset)) != dns::str_tolower(domain))
+        return false;
+
+    const std::string prefix = qname.substr(0, domainOffset - 1);
+    const size_t idSeparator = prefix.rfind('.');
+    if (idSeparator == std::string::npos)
+        return false;
+
+    parsed.data = prefix.substr(0, idSeparator);
+    parsed.clientId = dns::str_tolower(prefix.substr(idSeparator + 1));
+    parsed.labels = splitLabels(parsed.data);
+
+    if (parsed.data.empty() || parsed.labels.empty() ||
+        parsed.clientId.empty() || parsed.clientId.size() > 32 ||
+        !std::all_of(parsed.clientId.begin(), parsed.clientId.end(), [](unsigned char c) {
+            return std::isalnum(c) != 0;
+        }))
+        return false;
+    return true;
+}
+
+bool parseNonNegativeInt(const std::string& value, int& result)
+{
+    result = -1;
+    const char* begin = value.data();
+    const char* end = begin + value.size();
+    const auto parsed = std::from_chars(begin, end, result);
+    return parsed.ec == std::errc{} && parsed.ptr == end && result >= 0;
+}
+
 std::string endpointToString(const sockaddr_in& addr)
 {
     char buffer[INET_ADDRSTRLEN] = {0};
@@ -57,63 +123,83 @@ Server::~Server()
 
 void Server::stop()
 {
-    if (m_isStoped)
+    const bool wasStopped = m_isStopped.exchange(true);
+
+    if (!wasStopped)
     {
         dns::debug::log("Server::stop",
-                        "Stop requested but server already stopped");
-        return;
+                        "Stopping server on port " + std::to_string(m_port));
+        struct sockaddr_in addr = m_address;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        char byte = 0;
+#ifdef _WIN32
+        if (m_sockfd != INVALID_SOCKET)
+#else
+        if (m_sockfd >= 0)
+#endif
+            sendto(m_sockfd, &byte, 1, 0, (struct sockaddr*)&addr, sizeof(addr));
     }
-    dns::debug::log("Server::stop",
-                    "Stopping server on port " + std::to_string(m_port));
-    m_isStoped=true;
-    // Send an empty datagram to unblock recvfrom
-    struct sockaddr_in addr = m_address;
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    char byte = 0;
-    sendto(m_sockfd, &byte, 1, 0, (struct sockaddr*)&addr, sizeof(addr));
-    dns::debug::log("Server::stop", "Sent loopback datagram to unblock recvfrom");
+
     if(m_dnsServ && m_dnsServ->joinable())
     {
         dns::debug::log("Server::stop", "Joining worker thread");
         m_dnsServ->join();
     }
 #ifdef __linux__
-    close(m_sockfd);
+    if (m_sockfd >= 0)
+    {
+        close(m_sockfd);
+        m_sockfd = -1;
+    }
 #elif _WIN32
-    closesocket(m_sockfd);
-    WSACleanup();
+    if (m_sockfd != INVALID_SOCKET)
+    {
+        closesocket(m_sockfd);
+        m_sockfd = INVALID_SOCKET;
+    }
+    if (m_wsaStarted)
+    {
+        WSACleanup();
+        m_wsaStarted = false;
+    }
 #endif
-    dns::debug::log("Server::stop", "Socket closed");
+    m_dnsServ.reset();
 }
 
 
-void Server::launch()
+bool Server::launch()
 {
+    if (!m_isStopped.load())
+        return true;
+
 #ifdef _WIN32
     WSADATA wsa{};
     if (WSAStartup(MAKEWORD(2,2), &wsa) != 0)
     {
-        std::cerr << "[dns::Server] WSAStartup failed\n";
-        return;
+        return false;
     }
+    m_wsaStarted = true;
 #endif
 
     dns::debug::log("Server::launch",
                     "Launching server for domain '" + m_domainToResolve +
                         "' on port " + std::to_string(m_port));
 
-    m_isStoped=false;
     m_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
 
+#ifdef _WIN32
+    if(m_sockfd == INVALID_SOCKET)
+#else
     if(m_sockfd < 0)
+#endif
     {
         dns::debug::log("Server::launch",
                         "socket() failed: " + std::string(strerror(errno)));
-        m_isStoped = true;
 #ifdef _WIN32
         WSACleanup();
+        m_wsaStarted = false;
 #endif
-        return;
+        return false;
     }
 
     dns::debug::log("Server::launch", "Socket created (fd=" +
@@ -132,154 +218,72 @@ void Server::launch()
         dns::debug::log("Server::launch", text);
 
 #ifdef _WIN32
+        closesocket(m_sockfd);
+        m_sockfd = INVALID_SOCKET;
         WSACleanup();
+        m_wsaStarted = false;
+#else
+        close(m_sockfd);
+        m_sockfd = -1;
 #endif
 
-        return;
+        return false;
+    }
+
+    if (m_port == 0)
+    {
+        socklen_t addressLength = sizeof(m_address);
+        if (getsockname(m_sockfd,
+                        reinterpret_cast<struct sockaddr*>(&m_address),
+                        &addressLength) != 0)
+        {
+            stop();
+            return false;
+        }
+        m_port = ntohs(m_address.sin_port);
     }
 
     dns::debug::log("Server::launch",
                     "Socket bound to port " + std::to_string(m_port));
 
-    this->m_dnsServ = std::make_unique<std::thread>(&Server::run, this);
+    m_isStopped.store(false);
+    try
+    {
+        this->m_dnsServ = std::make_unique<std::thread>(&Server::run, this);
+    }
+    catch (...)
+    {
+        m_isStopped.store(true);
+#ifdef _WIN32
+        closesocket(m_sockfd);
+        m_sockfd = INVALID_SOCKET;
+        WSACleanup();
+        m_wsaStarted = false;
+#else
+        close(m_sockfd);
+        m_sockfd = -1;
+#endif
+        return false;
+    }
     dns::debug::log("Server::launch", "Worker thread started");
+    return true;
 }
 
 
-/**
- * @brief Process queued QNAMEs and return the first complete reassembled message.
- *
- * This function is used on the server side to process DNS query names (QNAMEs)
- * that were previously received and stored in `m_qnameReceived` by the worker loop.
- * It extracts message fragments, associates them with client IDs, and then
- * reassembles complete messages.
- *
- * Steps:
- *   1. Acquire the mutex and move all queued QNAMEs into a local vector
- *      (`qnameTmp`), then clear the shared queue. Unlock the mutex early
- *      so other threads can continue appending new QNAMEs.
- *   2. Log the number of QNAMEs to process if any are present.
- *   3. For each QNAME:
- *        - Strip off the configured domain (`m_domainToResolve`),
- *          leaving only the "data.clientId" prefix.
- *        - Find the last dot:
- *            * everything before it is considered the `data` (the message fragment),
- *            * everything after it is considered the `clientId`.
- *        - Log domain, raw QNAME, extracted data, and clientId.
- *        - If both data and clientId are non-empty, call handleDataReceived()
- *          to parse and accumulate the fragment for that client.
- *   4. After processing all QNAMEs, call getMsg() to retrieve the first
- *      fully reassembled message (if any).
- *   5. Return the pair {clientId, msg}.
- *
- * @return std::pair<std::string, std::string>
- *         - clientId: The identifier of the client whose message was completed.
- *         - msg:      The full reconstructed message payload, or empty if none complete.
- *
- * @note
- * - On the client side, this logic is not needed since handleResponse()
- *   is called directly for each response, so `m_qnameReceived` is unused.
- * - QNAMEs are expected in the form: `data.id.domain`.
- * - Only the first complete message (if any) is returned; additional
- *   complete messages remain in the reassembly buffer until requested.
- */
+/** Return the next complete upload assembled synchronously by the UDP worker. */
 std::pair<std::string, std::string> Server::getAvailableMessage()
 {
-    std::unique_lock<std::mutex> lock(m_mutex);
-
-    std::vector<std::string> qnameTmp = m_qnameReceived;
-    m_qnameReceived.clear();
-
-    lock.unlock();
-
-    if(qnameTmp.size()>0)
-        dns::debug::log(
-            "Server::getAvailableMessage",
-            "Processing " +
-                std::to_string(static_cast<unsigned long long>(qnameTmp.size())) +
-                " queued QNAME(s)");
-
-    for(int i=0; i<qnameTmp.size(); i++)
-    {
-
-        dns::debug::log(
-            "Server::getAvailableMessage",
-            "Processing " +
-            qnameTmp[i] +
-                " queued QNAME(s)");
-
-        //data.id.domain
-        std::string prefix = qnameTmp[i].substr(0, qnameTmp[i].size() - m_domainToResolve.size() -1);
-        auto lastDot = prefix.rfind('.');
-
-        std::string data;
-        std::string clientId;
-
-        if (lastDot != std::string::npos) 
-        {
-            data = prefix.substr(0, lastDot);          // "test1.test2.test3"
-            clientId = prefix.substr(lastDot + 1);      // "id"
-        } 
-
-        dns::debug::log("Server::getAvailableMessage", "m_domainToResolve '" + m_domainToResolve + "'");
-        dns::debug::log("Server::getAvailableMessage", "qName '" + qnameTmp[i] + "'");
-        dns::debug::log("Server::getAvailableMessage", "data '" + data + "'");
-        dns::debug::log("Server::getAvailableMessage", "clientId '" + clientId + "'");
-
-        if(!data.empty() && !clientId.empty()) 
-            handleDataReceived(data, clientId);
-    }
-
-    auto [clientId, msg] = getMsg();
-
-    return {clientId, msg};
+    cleanupExpiredState();
+    return getMsg();
 }
 
 
-void Server::setMessageToSend(const std::string& msg, const std::string& clientId)
+bool Server::setMessageToSend(const std::string& msg, const std::string& clientId)
 {
-    setMsg(msg, clientId);
+    return setMsg(msg, clientId);
 }
 
-/**
- * @brief Main worker loop of the DNS server.
- *
- * This function runs in a loop until `m_isStoped` is set, continuously
- * receiving DNS queries from clients, decoding them, preparing responses,
- * and sending replies back.
- *
- * Steps:
- *   1. Wait for an incoming UDP datagram using recvfrom().
- *      - If recvfrom() returns <= 0 and the server is stopping, exit the loop.
- *      - If recvfrom() returns <= 0 but the server is not stopping, continue
- *        waiting.
- *   2. Convert the client address into a string for logging.
- *   3. Decode the received buffer into a Query object and log its metadata
- *      (ID, qname, qtype, qclass).
- *   4. Store the qname in m_qnameReceived (used later to reassemble complete
- *      messages).
- *   5. Construct a Response object and call prepareResponse() to build the
- *      DNS reply based on the incoming query.
- *      - TODO: add validation to ensure data is only sent to the correct
- *        beacon / client identity.
- *   6. Serialize the Response into the buffer and log its size and RDATA length.
- *   7. Send the response back to the client using sendto(), and log the number
- *      of bytes sent along with timing information.
- *   8. Loop repeats until m_isStoped is true.
- *
- * @note
- * - This loop processes all incoming queries synchronously on the thread
- *   that calls run().
- * - Currently, the client address is only logged but not used for session
- *   handling; depending on the design, this might need to be tied to client
- *   sessions for correctness.
- * - m_qnameReceived accumulates all qnames seen, which are later processed
- *   to reconstruct higher-level messages.
- *
- * Logging:
- * - Detailed debug logs are emitted for receive timings, query decoding,
- *   response preparation, and send timings.
- */
+/** Receive, validate and answer DNS datagrams until stop() is requested. */
 
 void Server::run()
 {
@@ -289,16 +293,18 @@ void Server::run()
 
     dns::debug::log("Server::run", "Worker loop started");
 
-    while(!m_isStoped)
+    while(!m_isStopped.load())
     {
-        // wait to reveive a message
-        auto waitStart = std::chrono::steady_clock::now();
-        int nbytes = recvfrom(m_sockfd, buffer, BUFFER_SIZE, 0, (struct sockaddr *) &clientAddress, &addrLen);
-        auto afterRecv = std::chrono::steady_clock::now();
+        try
+        {
+            addrLen = sizeof(struct sockaddr_in);
+            auto waitStart = std::chrono::steady_clock::now();
+            int nbytes = recvfrom(m_sockfd, buffer, BUFFER_SIZE, 0, (struct sockaddr *) &clientAddress, &addrLen);
+            auto afterRecv = std::chrono::steady_clock::now();
 
         if(nbytes <= 0)
         {
-            if(m_isStoped)
+            if(m_isStopped.load())
             {
                 dns::debug::log("Server::run",
                                 "recvfrom() returned " + std::to_string(nbytes) +
@@ -312,7 +318,9 @@ void Server::run()
             continue;
         }
 
-        // client address only used for logging for the moment, do I need to use to handle sessions ??
+        if (m_isStopped.load())
+            break;
+
         std::string clientEndpoint = endpointToString(clientAddress);
         dns::debug::log(
             "Server::run",
@@ -320,10 +328,14 @@ void Server::run()
                 clientEndpoint + " after " +
                 dns::debug::formatDuration(afterRecv - waitStart));
 
-        // all messages are part of the final payload that need to be put together
-        // decode extract the data using decode_qname
         Query query;
         query.decode(buffer, nbytes);
+
+        if (!query.isValid())
+        {
+            dns::debug::log("Server::run", "Discarding malformed DNS query");
+            continue;
+        }
 
         std::string qname = query.getQName();
 
@@ -333,18 +345,9 @@ void Server::run()
                 qname + "' qtype=" + std::to_string(query.getQType()) +
                 " qclass=" + std::to_string(query.getQClass()));
 
-
-        // add the qname received to a list that will be put togheter after to form a message
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_qnameReceived.push_back(qname);
-        }
-
         Response response;
         auto handleStart = std::chrono::steady_clock::now();
 
-        // TODO put a mechnisme in place to validate that we send the data to the right beacon
-        // check if message if for our domain and prepare a response independty from the identity of the querier ! 
         prepareResponse(query, response);
         
         auto afterHandle = std::chrono::steady_clock::now();
@@ -372,7 +375,6 @@ void Server::run()
                 std::to_string(
                     static_cast<unsigned long long>(response.getRdata().size())));
 
-        // send the reponse to the query
         auto beforeSend = std::chrono::steady_clock::now();
         int sent = sendto(m_sockfd, buffer, nbytes, 0, (struct sockaddr *) &clientAddress, addrLen);
         auto afterSend = std::chrono::steady_clock::now();
@@ -382,134 +384,116 @@ void Server::run()
             "Sent " + std::to_string(sent) + " bytes to " + clientEndpoint +
                 " in " +
                 dns::debug::formatDuration(afterSend - beforeSend));
+        }
+        catch (...)
+        {
+            if (m_isStopped.load())
+                break;
+        }
     }
 
     dns::debug::log("Server::run", "Worker loop terminated");
 }
 
 /**
- * @brief Build a DNS response based on the incoming query (qName, qType, etc.).
- *
- * This function inspects the received DNS query, determines the type of request,
- * and prepares the corresponding DNS response payload.
- *
- * Steps:
- *   1. Extract the QNAME from the query.
- *   2. If the QNAME ends with this server’s domain (`m_domainToResolve`):
- *        - Split the prefix into `data` (everything before the last dot)
- *          and `id` (the last label, representing the client ID).
- *        - Log extracted values for debugging.
- *        - Depending on the QNAME contents:
- *            * If it contains `m_secretKeyClientAskData`:
- *                - Call splitPacket() to prepare fragments for this client.
- *                - If fragments are queued in `m_msgQueue[id]`, dequeue one
- *                  fragment as the payload.
- *                - Otherwise, respond with `m_secretKeyServerNoData`.
- *            * If it contains `m_secretKeyClientKeepAlive`:
- *                - Respond with `m_secretKeyServerKeepAlive`.
- *            * Otherwise (client sent data or garbage):
- *                - Respond with `m_secretKeyAck`.
- *   3. If the QNAME is not in scope (doesn’t end with this domain),
- *      log the anomaly and leave `dataToSend` empty.
- *   4. Populate the `Response` object with:
- *        - Standard header fields (ID, flags, counts, TTL, etc.).
- *        - If `dataToSend` is empty, set RCODE = NameError (NXDOMAIN).
- *        - Otherwise, set RCODE = Ok, ANCOUNT = 1, and put the payload
- *          into RDATA formatted for the query’s QTYPE:
- *            * A     → enforce 4-byte hex (8 chars).
- *            * AAAA  → enforce 16-byte hex (32 chars).
- *            * MX    → raw string.
- *            * CNAME/NS/PTR/TXT/default → raw string.
- *
- * @param query     The incoming DNS query object (decoded from client packet).
- * @param response  The response object to populate and send back.
- *
- * @note
- * - The clientId is derived from the last label in the QNAME.
- * - The response payload is selected based on control keys embedded
- *   in the query or from queued message fragments.
- * - Logging provides visibility into parsing, queue state, and payloads.
+ * Validate the domain, class and exact control labels, ingest uploads, and
+ * serve one retained download fragment. A fragment is removed only when the
+ * next request acknowledges its session and index.
  */
 
 void Server::prepareResponse(const Query& query, Response& response)
 {
-    string qName = query.getQName();
+    const string qName = query.getQName();
+    string dataToSend;
+    Response::Code failureCode = Response::NameError;
 
-    string dataToSend = "";
-    if (endsWith(qName, m_domainToResolve))
+    const auto ackCutoff = std::chrono::steady_clock::now() - std::chrono::minutes(5);
+    for (auto it = m_completedDownloadAcks.begin();
+         it != m_completedDownloadAcks.end(); )
     {
-        //data1.data2.data3.id.domain
-        std::string prefix = qName.substr(0, qName.size() - m_domainToResolve.size() -1);
-        auto lastDot = prefix.rfind('.');
+        if (it->second.updatedAt < ackCutoff)
+            it = m_completedDownloadAcks.erase(it);
+        else
+            ++it;
+    }
 
-        
+    ParsedClientName parsed;
+    if (query.getQClass() == 1 && parseClientName(qName, m_domainToResolve, parsed))
+    {
+        const std::string control = str_tolower(parsed.labels.front());
 
-        std::string id;
-        std::string data;
-        if (lastDot != std::string::npos) 
+        if (control == m_secretKeyClientAskData && query.getQType() == 16)
         {
-            data = prefix.substr(0, lastDot);          // "test1.test2.test3"
-            id   = prefix.substr(lastDot + 1);         // "id"
-        } 
-
-        dns::debug::log("Server::prepareResponse", "m_domainToResolve '" + m_domainToResolve + "'");
-        dns::debug::log("Server::prepareResponse", "qName '" + qName + "'");
-        dns::debug::log("Server::prepareResponse", "data '" + data + "'");
-        dns::debug::log("Server::prepareResponse", "id '" + id + "'");
-       
-        // ask data
-        if(qName.contains(m_secretKeyClientAskData))
-        {
-            splitPacket(query.getQType(), id);
-
-            // data available
-            size_t remainingFragments = 0;
+            bool validAsk = false;
+            bool completedAcknowledgedMessage = false;
+            if (parsed.labels.size() == 4)
             {
-                std::lock_guard<std::mutex> lock(m_mutex);
-                auto& queue = m_msgQueue[id];
-                if(!queue.empty())
+                int acknowledgedIndex = -1;
+                const std::string acknowledgedSession = str_tolower(parsed.labels[1]);
+                validAsk = parseNonNegativeInt(parsed.labels[2], acknowledgedIndex);
+                if (validAsk && acknowledgedSession == "none")
                 {
-                    dataToSend = queue.front();
-                    queue.pop();
-                    remainingFragments = queue.size();
+                    m_completedDownloadAcks.erase(parsed.clientId);
+                }
+                else if (validAsk)
+                {
+                    const auto completed = m_completedDownloadAcks.find(parsed.clientId);
+                    if (completed != m_completedDownloadAcks.end() &&
+                        completed->second.session == acknowledgedSession &&
+                        completed->second.index == acknowledgedIndex)
+                    {
+                        completed->second.updatedAt = std::chrono::steady_clock::now();
+                        completedAcknowledgedMessage = true;
+                    }
+                    else
+                    {
+                        const auto queuedIdentity = queuedFragmentIdentity(parsed.clientId);
+                        const bool wasFinalFragment = queuedIdentity &&
+                            queuedIdentity->session == acknowledgedSession &&
+                            queuedIdentity->index == acknowledgedIndex &&
+                            queuedIdentity->index + 1 == queuedIdentity->count;
+                        const bool acknowledged = acknowledgeQueuedFragment(
+                            parsed.clientId, acknowledgedSession, acknowledgedIndex);
+                        completedAcknowledgedMessage = acknowledged && wasFinalFragment;
+                        if (completedAcknowledgedMessage)
+                        {
+                            m_completedDownloadAcks[parsed.clientId] = {
+                                acknowledgedSession,
+                                acknowledgedIndex,
+                                std::chrono::steady_clock::now()};
+                        }
+                    }
                 }
             }
 
-            if(!dataToSend.empty())
+            if (validAsk)
             {
-                dns::debug::log(
-                    "Server::prepareResponse",
-                    "Using queued fragment for response; remaining fragments=" +
-                        std::to_string(static_cast<unsigned long long>(
-                            remainingFragments)) +
-                        " payload='" + dataToSend + "'");
+                if (!completedAcknowledgedMessage)
+                {
+                    splitPacket(query.getQType(), parsed.clientId);
+                    dataToSend = peekQueuedFragment(parsed.clientId);
+                }
+                if (dataToSend.empty())
+                    dataToSend = m_secretKeyServerNoData;
             }
-            // no data
             else
             {
-                dataToSend = m_secretKeyServerNoData;
-
-                dns::debug::log("Server::prepareResponse", "No payload available; sending control domain '" + dataToSend + "'");
+                failureCode = Response::FormatError;
             }
         }
-        // just say hello -> could be used to ID 
-        else if(qName.contains(m_secretKeyClientKeepAlive))
+        else if (control == m_secretKeyClientKeepAlive &&
+                 parsed.labels.size() == 2 && query.getQType() == 5)
         {
             dataToSend = m_secretKeyServerKeepAlive;
-
-            dns::debug::log("Server::prepareResponse", "Client send KeepAlive '" + dataToSend + "'");
         }
-        // shit or acutal data sent from actual beacon
-        else
+        else if (query.getQType() == 5 && handleDataReceived(parsed.data, parsed.clientId))
         {
             dataToSend = m_secretKeyAck;
-
-            dns::debug::log("Server::prepareResponse", "Client sent data or parazit packet '" + dataToSend + "'");
         }
-    }
-    else
-    {
-        dns::debug::log("Server::prepareResponse", "Received unexptected qname '" + qName + "'");
+        else
+        {
+            failureCode = Response::FormatError;
+        }
     }
 
     response.setID(query.getID());
@@ -528,7 +512,7 @@ void Server::prepareResponse(const Query& query, Response& response)
 
         response.clearAnswer();
         response.setAnCount(0);
-        response.setRCode(Response::NameError);
+        response.setRCode(failureCode);
     }
     else
     {

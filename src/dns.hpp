@@ -5,6 +5,7 @@
 #include <thread>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 #include <queue>
 #include <unordered_map>
@@ -31,6 +32,13 @@
 namespace dns 
 {
 
+struct FragmentIdentity
+{
+    std::string session;
+    int index = -1;
+    int count = 0;
+};
+
 class Dns
 {
 
@@ -39,21 +47,26 @@ public:
     ~Dns();
 
 protected:
-    void setMsg(const std::string& msg, const std::string& clientId);
+    bool setMsg(const std::string& msg, const std::string& clientId);
     std::pair<std::string, std::string> getMsg();
 
-    void handleDataReceived(const std::string& rdata, const std::string& clientId);
+    std::optional<FragmentIdentity> handleDataReceived(const std::string& rdata, const std::string& clientId);
     void splitPacket(int qType, const std::string& clientId);
+    std::optional<FragmentIdentity> queuedFragmentIdentity(const std::string& clientId);
+    std::string peekQueuedFragment(const std::string& clientId);
+    bool acknowledgeQueuedFragment(const std::string& clientId,
+                                   const std::string& session,
+                                   int index);
+    void cleanupExpiredState();
     
     std::string m_domainToResolve;
     int m_maxMessageSize;
 
-    std::unordered_map<std::string, std::string> m_msgToSend;
+    std::unordered_map<std::string, std::queue<std::string>> m_msgToSend;
     std::unordered_map<std::string, std::queue<std::string>> m_msgQueue;
 
     bool m_moreMsgToGet;
     std::unordered_map<std::string, std::unordered_map<std::string, Packet>> m_msgReceived;
-    std::vector<std::string> m_qnameReceived;
 
     const std::string m_secretKeyClientAskData = "ask";
     const std::string m_secretKeyClientKeepAlive = "hello";
@@ -62,6 +75,14 @@ protected:
     const std::string m_secretKeyAck = "ack";
 
     std::mutex m_mutex;    
+
+    static constexpr std::size_t MaxPendingMessagesPerClient = 64;
+    static constexpr std::size_t MaxClients = 1024;
+    static constexpr std::size_t MaxSessionsPerClient = 64;
+    static constexpr std::size_t MaxTotalSessions = 256;
+    static constexpr int MaxFragmentsPerMessage = 4096;
+    static constexpr std::size_t MaxFragmentPayload = 4096;
+    static constexpr std::size_t MaxAssembledMessage = 1024 * 1024;
 
 };
 

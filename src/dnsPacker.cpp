@@ -24,15 +24,39 @@ std::string stringToHex(const std::string& input)
 
 std::string hexToString(const std::string& hex) 
 {
-    int len = hex.length();
     std::string result;
-    for(int i=0; i< len; i+=2)
-    {
-        std::string byte = hex.substr(i,2);
-        char chr = (char) (int)strtol(byte.c_str(), NULL, 16);
-        result.push_back(chr);
-    }
+    if (!tryHexToString(hex, result))
+        return {};
     return result;
+}
+
+
+bool tryHexToString(const std::string& hex, std::string& output)
+{
+    output.clear();
+    if (hex.empty() || (hex.size() % 2) != 0)
+        return false;
+
+    auto hexValue = [](char value) -> int {
+        if (value >= '0' && value <= '9') return value - '0';
+        if (value >= 'a' && value <= 'f') return 10 + value - 'a';
+        if (value >= 'A' && value <= 'F') return 10 + value - 'A';
+        return -1;
+    };
+
+    output.reserve(hex.size() / 2);
+    for (size_t i = 0; i < hex.size(); i += 2)
+    {
+        const int high = hexValue(hex[i]);
+        const int low = hexValue(hex[i + 1]);
+        if (high < 0 || low < 0)
+        {
+            output.clear();
+            return false;
+        }
+        output.push_back(static_cast<char>((high << 4) | low));
+    }
+    return true;
 }
 
 
@@ -64,7 +88,7 @@ std::string addDotEvery62Chars(const std::string& str)
 std::string generateRandomString(int length) 
 {
     const std::string charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    static std::mt19937 rng{std::random_device{}()};
+    thread_local std::mt19937 rng{std::random_device{}()};
     std::uniform_int_distribution<std::size_t> dist(0, charset.size() - 1);
     std::string result;
     result.reserve(length);
@@ -79,7 +103,7 @@ std::string generateRandomString(int length)
 std::string generateRandomLowcaseString(int length) 
 {
     const std::string charset = "0123456789abcdefghijklmnopqrstuvwxyz";
-    static std::mt19937 rng{std::random_device{}()};
+    thread_local std::mt19937 rng{std::random_device{}()};
     std::uniform_int_distribution<std::size_t> dist(0, charset.size() - 1);
     std::string result;
     result.reserve(length);

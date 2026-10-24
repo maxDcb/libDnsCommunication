@@ -1,20 +1,11 @@
 cmake_minimum_required(VERSION 3.24 FATAL_ERROR)
 project(Dnscommunication VERSION 0.0.0 LANGUAGES CXX C)
 
-set(CMAKE_BUILD_TYPE Release)
+include(CTest)
+
 set(CMAKE_CXX_STANDARD 23)
 
-option(DNS_ENABLE_LOGGING "Enable debug logging output" ON)
-
-IF (WIN32)
-    set(CMAKE_CXX_FLAGS_RELEASE "-MT -O1 -Ob0")
-    set(CMAKE_C_FLAGS_RELEASE "-MT -O1 -Ob0")
-ELSE()
-    set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
-    set(BUILD_SHARED_LIBS OFF)
-    set(CMAKE_EXE_LINKER_FLAGS "-static")
-ENDIF()
-
+option(DNS_ENABLE_LOGGING "Enable debug logging output" OFF)
 
 set(SOURCE_FILES
 src/message.cpp
@@ -36,6 +27,8 @@ if(DNS_ENABLE_LOGGING)
     target_compile_definitions(${PROJECT_NAME} PUBLIC DNS_ENABLE_LOGGING)
 endif()
 if(WIN32)
+        target_compile_definitions(${PROJECT_NAME} PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+        target_link_libraries(${PROJECT_NAME} ws2_32)
 else()
         target_link_libraries(${PROJECT_NAME} pthread)
 endif()
@@ -51,4 +44,6 @@ else()
 endif()
 
 
-add_subdirectory(tests)
+if(BUILD_TESTING)
+        add_subdirectory(tests)
+endif()

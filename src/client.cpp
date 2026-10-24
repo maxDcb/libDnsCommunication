@@ -1,5 +1,6 @@
 #include <iostream>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cctype>
 #include <string_view>
@@ -17,6 +18,34 @@
 
 using namespace std;
 using namespace dns;
+
+namespace
+{
+uint16_t nextQueryId()
+{
+    static std::atomic<uint16_t> next{1};
+    uint16_t value = next.fetch_add(1);
+    if (value == 0)
+        value = next.fetch_add(1);
+    return value;
+}
+
+bool isExpectedResponse(const Response& response,
+                        uint16_t queryId,
+                        const std::string& qname,
+                        uint qtype)
+{
+    return response.isValid() &&
+           response.getID() == queryId &&
+           response.getRCode() == Response::Ok &&
+           response.getAnCount() == 1 &&
+           str_tolower(response.getQuestionName()) == str_tolower(qname) &&
+           response.getQuestionType() == qtype &&
+           response.getQuestionClass() == 1 &&
+           response.getType() == qtype &&
+           response.getClass() == 1;
+}
+}
 
 
 Client::Client(const std::string& dnsServerAdd, const std::string& domainToResolve, int port)
@@ -78,13 +107,12 @@ Client::~Client()
  * - Debug logging provides detailed visibility into queue size, fragmenting,
  *   timing, and socket operations.
  */
-void Client::sendMessage(const std::string& msg)
+bool Client::sendMessage(const std::string& msg)
 {
     char buffer[BUFFER_SIZE];
     int nbytes = 0;
 
     Query query;
-    query.setID(0);
     query.setQdCount(1);
     query.setAnCount(0);
     query.setNsCount(0);
@@ -101,8 +129,17 @@ void Client::sendMessage(const std::string& msg)
                 " bytes");
 
         // split the msg to send into packet of the right size of the recorde we intend to send: those packet or in m_msgQueue
-        setMsg(msg, "serv");
-        splitPacket(5, "serv");
+        if (m_activeOutboundMessage.empty())
+        {
+            if (!setMsg(msg, "serv"))
+                return false;
+            m_activeOutboundMessage = msg;
+            splitPacket(5, "serv");
+        }
+        else if (m_activeOutboundMessage != msg)
+        {
+            return false;
+        }
     }
     else
     {
@@ -111,7 +148,13 @@ void Client::sendMessage(const std::string& msg)
 
     dns::debug::log("Client::sendMessage", "Outbound fragment queue contains " + std::to_string(static_cast<unsigned long long>(m_msgQueue["serv"].size())) + " item(s); awaiting more fragments=" + (m_moreMsgToGet ? std::string("true") : std::string("false")));
 
-    struct sockaddr_in serv_addr;
+    if (m_msgQueue["serv"].empty())
+    {
+        m_activeOutboundMessage.clear();
+        return true;
+    }
+
+    struct sockaddr_in serv_addr{};
     fd_set read_fds;
     FD_ZERO(&read_fds);
 
@@ -119,15 +162,38 @@ void Client::sendMessage(const std::string& msg)
     int sockfd = socket(PF_INET, SOCK_DGRAM, 0);
     serv_addr.sin_port = htons(m_port);
     serv_addr.sin_family = AF_INET;
-    inet_aton(m_dnsServerAdd.c_str(), &(serv_addr.sin_addr));
+    const bool validAddress = inet_aton(m_dnsServerAdd.c_str(), &(serv_addr.sin_addr)) != 0;
 #elif _WIN32
     WSAData data;
-    WSAStartup(MAKEWORD(2, 2), &data);
-    int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    if (WSAStartup(MAKEWORD(2, 2), &data) != 0)
+        return false;
+    SOCKET sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP );
     serv_addr.sin_port = htons(m_port);
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = inet_addr( m_dnsServerAdd.c_str() );
+    const bool validAddress = serv_addr.sin_addr.s_addr != INADDR_NONE;
 #endif
+
+#ifdef _WIN32
+    if (sockfd == INVALID_SOCKET)
+    {
+        WSACleanup();
+        return false;
+    }
+#else
+    if (sockfd < 0)
+        return false;
+#endif
+    if (!validAddress)
+    {
+#ifdef _WIN32
+        closesocket(sockfd);
+        WSACleanup();
+#else
+        close(sockfd);
+#endif
+        return false;
+    }
 
     dns::debug::log("Client::sendMessage", "UDP socket created; attempting connection test via connect()");
 
@@ -178,12 +244,16 @@ void Client::sendMessage(const std::string& msg)
 
         // we add the domain to resolve to ensure we talk to the server
         qname += m_domainToResolve;
+        const uint16_t queryId = nextQueryId();
+        query.setID(queryId);
         query.setQName(qname);
         // TODO put random
         query.setQType(5);
         query.setQClass(1);
 
         nbytes = query.code(buffer);
+        if (nbytes <= 0 || nbytes > BUFFER_SIZE)
+            break;
 
         dns::debug::log( "Client::sendMessage", "Encoded query length=" + std::to_string(nbytes) + " bytes for QNAME '" + qname + "'");
 
@@ -233,14 +303,20 @@ void Client::sendMessage(const std::string& msg)
 
         dns::debug::log( "Client::sendMessage", "recvfrom() returned " + std::to_string(received) + " bytes after " + dns::debug::formatDuration(afterRecv - afterSend));
 
+        if (received <= 0)
+            break;
+
         // all messages are part of the final payload that need to be put together
         // decode extract the data using parse_rdata and the record type received
         Response response;
         response.decode(buffer, received);
 
+        if (!isExpectedResponse(response, queryId, qname, 5))
+            break;
+
         std::string rdata = response.getRdata();
 
-        if(rdata.contains(m_secretKeyAck))  
+        if(rdata == m_secretKeyAck)
         {
             if(!m_msgQueue["serv"].empty())
             {
@@ -251,6 +327,7 @@ void Client::sendMessage(const std::string& msg)
         else
         {
             dns::debug::log("Client::sendMessage", "Server did not ACK, fragment remains queued");
+            break;
         }
 
         std::string rdataPreview = rdata.substr(0, 60);
@@ -279,6 +356,10 @@ void Client::sendMessage(const std::string& msg)
 #endif
 
     dns::debug::log("Client::sendMessage", "Socket closed");
+    const bool complete = m_msgQueue["serv"].empty();
+    if (complete)
+        m_activeOutboundMessage.clear();
+    return complete;
 }
 
 /**
@@ -330,7 +411,6 @@ std::string Client::requestMessage()
     int nbytes = 0;
 
     Query query;
-    query.setID(0);
     query.setQdCount(1);
     query.setAnCount(0);
     query.setNsCount(0);
@@ -338,7 +418,7 @@ std::string Client::requestMessage()
 
     dns::debug::log("Client::requestMessage", "Preparing transmission to DNS server " + m_dnsServerAdd + ":" + std::to_string(m_port));
 
-    struct sockaddr_in serv_addr;
+    struct sockaddr_in serv_addr{};
     fd_set read_fds;
     FD_ZERO(&read_fds);
 
@@ -346,15 +426,38 @@ std::string Client::requestMessage()
     int sockfd = socket(PF_INET, SOCK_DGRAM, 0);
     serv_addr.sin_port = htons(m_port);
     serv_addr.sin_family = AF_INET;
-    inet_aton(m_dnsServerAdd.c_str(), &(serv_addr.sin_addr));
+    const bool validAddress = inet_aton(m_dnsServerAdd.c_str(), &(serv_addr.sin_addr)) != 0;
 #elif _WIN32
     WSAData data;
-    WSAStartup(MAKEWORD(2, 2), &data);
-    int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    if (WSAStartup(MAKEWORD(2, 2), &data) != 0)
+        return {};
+    SOCKET sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP );
     serv_addr.sin_port = htons(m_port);
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = inet_addr( m_dnsServerAdd.c_str() );
+    const bool validAddress = serv_addr.sin_addr.s_addr != INADDR_NONE;
 #endif
+
+#ifdef _WIN32
+    if (sockfd == INVALID_SOCKET)
+    {
+        WSACleanup();
+        return {};
+    }
+#else
+    if (sockfd < 0)
+        return {};
+#endif
+    if (!validAddress)
+    {
+#ifdef _WIN32
+        closesocket(sockfd);
+        WSACleanup();
+#else
+        close(sockfd);
+#endif
+        return {};
+    }
 
     dns::debug::log("Client::requestMessage", "UDP socket created; attempting connection test via connect()");
 
@@ -381,6 +484,10 @@ std::string Client::requestMessage()
         std::string qname;
         qname = m_secretKeyClientAskData;
         qname += ".";
+        qname += m_pendingServerAck ? m_pendingServerAck->session : "none";
+        qname += ".";
+        qname += m_pendingServerAck ? std::to_string(m_pendingServerAck->index) : "0";
+        qname += ".";
         qname += generateRandomString(8); // avoid caching
         qname += ".";
 
@@ -388,12 +495,16 @@ std::string Client::requestMessage()
     
         // we add the domain to resolve to ensure we talk to the server
         qname += m_domainToResolve;
+        const uint16_t queryId = nextQueryId();
+        query.setID(queryId);
         query.setQName(qname);
         // TXT record
         query.setQType(16);
         query.setQClass(1);
 
         nbytes = query.code(buffer);
+        if (nbytes <= 0 || nbytes > BUFFER_SIZE)
+            break;
 
         dns::debug::log( "Client::requestMessage", "Encoded query length=" + std::to_string(nbytes) + " bytes for QNAME '" + qname + "'");
 
@@ -443,10 +554,16 @@ std::string Client::requestMessage()
 
         dns::debug::log( "Client::requestMessage", "recvfrom() returned " + std::to_string(received) + " bytes after " + dns::debug::formatDuration(afterRecv - afterSend));
 
+        if (received <= 0)
+            break;
+
         // all messages are part of the final payload that need to be put together
         // decode extract the data using parse_rdata and the record type received
         Response response;
         response.decode(buffer, received);
+
+        if (!isExpectedResponse(response, queryId, qname, 16))
+            break;
 
         std::string rdata = response.getRdata();
 
@@ -455,8 +572,18 @@ std::string Client::requestMessage()
             rdataPreview += "...";
         dns::debug::log( "Client::requestMessage", "Received RDATA length=" + std::to_string(static_cast<unsigned long long>(rdata.size())) + " preview='" + rdataPreview + "'");
         
-        // reassemble a message from the data extracted from the dns packet
-        handleDataReceived(rdata, "serv");
+        if (rdata == m_secretKeyServerNoData)
+        {
+            handleDataReceived(rdata, "serv");
+            m_pendingServerAck.reset();
+            break;
+        }
+
+        // Reassemble the fragment and acknowledge it on the next request.
+        auto fragment = handleDataReceived(rdata, "serv");
+        if (!fragment)
+            break;
+        m_pendingServerAck = *fragment;
 
         auto afterHandle = std::chrono::steady_clock::now();
         dns::debug::log( "Client::requestMessage", "Response handling completed in " + dns::debug::formatDuration(afterHandle - afterRecv) + "; fragments remaining=" + std::to_string(static_cast<unsigned long long>(m_msgQueue.size())) +", awaiting more=" + (m_moreMsgToGet ? std::string("true") : std::string("false")));
@@ -468,9 +595,15 @@ std::string Client::requestMessage()
 
         dns::debug::log( "Client::requestMessage", "Iteration " + std::to_string(iteration) + " total time " + dns::debug::formatDuration(std::chrono::steady_clock::now() - iterationStart));
     }
-    while(m_moreMsgToGet);
+    while((m_moreMsgToGet || m_pendingServerAck.has_value()) &&
+          iteration <= static_cast<size_t>(MaxFragmentsPerMessage + 1));
 
-    auto [clientId, msg] = getMsg();
+    std::string msg;
+    if (!m_pendingServerAck)
+    {
+        auto completed = getMsg();
+        msg = std::move(completed.second);
+    }
 
     dns::debug::log( "Client::requestMessage", "Transmission loop completed after " + dns::debug::formatDuration(std::chrono::steady_clock::now() - sessionStart) + "; remaining fragments=" + std::to_string(static_cast<unsigned long long>(m_msgQueue.size())) + ", awaiting more=" + (m_moreMsgToGet ? std::string("true") : std::string("false")));
 

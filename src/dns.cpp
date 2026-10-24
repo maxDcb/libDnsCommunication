@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <string_view>
 
 #include "nlohmann/json.hpp"
@@ -15,6 +16,42 @@ using namespace std;
 using namespace dns;
 
 using json = nlohmann::json;
+
+namespace
+{
+bool decodePacketJson(const std::string& encoded, json& packetJson)
+{
+    std::string compact = encoded;
+    compact.erase(std::remove(compact.begin(), compact.end(), '.'), compact.end());
+
+    std::string decoded;
+    if (!tryHexToString(compact, decoded))
+        return false;
+
+    try
+    {
+        packetJson = json::parse(decoded);
+    }
+    catch (...)
+    {
+        return false;
+    }
+    return packetJson.is_object();
+}
+
+bool readFragmentIdentity(const json& packetJson, FragmentIdentity& identity)
+{
+    if (!packetJson.contains("s") || !packetJson["s"].is_string() ||
+        !packetJson.contains("k") || !packetJson["k"].is_number_integer() ||
+        !packetJson.contains("n") || !packetJson["n"].is_number_integer())
+        return false;
+
+    identity.session = packetJson["s"].get<std::string>();
+    identity.index = packetJson["k"].get<int>();
+    identity.count = packetJson["n"].get<int>();
+    return !identity.session.empty();
+}
+}
 
 
 Dns::Dns(const std::string& domain, const std::string& id)
@@ -48,14 +85,22 @@ Dns::~Dns()
  * @param clientId  The identifier of the client who should receive the message.
  */
 #undef min
-void Dns::setMsg(const std::string& msg, const std::string& clientId)
+bool Dns::setMsg(const std::string& msg, const std::string& clientId)
 {
     dns::debug::log("Dns::setMsg",
         "Preparing message of " + std::to_string(msg.size()) + " bytes" );
 
     const std::lock_guard<std::mutex> lock(m_mutex);
 
-    m_msgToSend[clientId] = msg;
+    if (msg.empty() || msg.size() > MaxAssembledMessage || clientId.empty())
+        return false;
+
+    auto& pending = m_msgToSend[clientId];
+    if (pending.size() >= MaxPendingMessagesPerClient)
+        return false;
+
+    pending.push(msg);
+    return true;
 }
 
 /**
@@ -101,8 +146,10 @@ void Dns::splitPacket(int qType, const std::string& clientId)
     std::lock_guard<std::mutex> lock(m_mutex);
 
     auto it = m_msgToSend.find(clientId);
-    if(it == m_msgToSend.end() || it->second.empty())
+    if(it == m_msgToSend.end() || it->second.empty() || !m_msgQueue[clientId].empty())
         return;
+
+    const std::string message = it->second.front();
 
     int maxMessageSize;
 
@@ -137,23 +184,23 @@ void Dns::splitPacket(int qType, const std::string& clientId)
         dns::debug::log("Dns::splitPacket",
                         "Query type " + std::to_string(qType) +
                             " does not support payload transmission; dropping " +
-                            std::to_string(static_cast<unsigned long long>(it->second.size())) +
+                            std::to_string(static_cast<unsigned long long>(message.size())) +
                             " byte message for client '" + clientId + "'");
-        it->second.clear();
+        it->second.pop();
         return;
     }
 
     dns::debug::log("Dns::splitPacket",
-                    "Preparing message of " + std::to_string(static_cast<unsigned long long>(it->second.size())) +
+                    "Preparing message of " + std::to_string(static_cast<unsigned long long>(message.size())) +
                         " bytes for domain '" + m_domainToResolve + "'");
 
-    std::string sessionId = generateRandomString(2);
+    std::string sessionId = generateRandomLowcaseString(8);
 
     dns::debug::log("Dns::splitPacket",
                     "Generated session identifier '" + sessionId + "'");
 
     json packetJson;
-    packetJson["m"] = it->second;
+    packetJson["m"] = message;
     packetJson["s"] = sessionId;
     packetJson["n"] = 1;
     packetJson["k"] = 0;
@@ -176,11 +223,11 @@ void Dns::splitPacket(int qType, const std::string& clientId)
                                 " bytes, capacity=" +
                                 std::to_string(maxMessageSize) +
                                 "); dropping message for client '" + clientId + "'");
-            it->second.clear();
+            it->second.pop();
             return;
         }
 
-        size_t totalLen = it->second.length();
+        size_t totalLen = message.length();
         size_t startPos = 0;
 
         dns::debug::log("Dns::splitPacket",
@@ -192,7 +239,7 @@ void Dns::splitPacket(int qType, const std::string& clientId)
         while (startPos < totalLen)
         {
             size_t chunkSize = std::min<size_t>(maxLength, totalLen - startPos);
-            std::string tmp = it->second.substr(startPos, chunkSize);
+            std::string tmp = message.substr(startPos, chunkSize);
             packetJson["m"] = tmp;
             messages.push_back(packetJson);
             startPos += chunkSize;
@@ -229,14 +276,16 @@ void Dns::splitPacket(int qType, const std::string& clientId)
         dns::debug::log(
             "Dns::splitPacket",
             "Message fits in a single fragment for session '" + sessionId +
-                "' raw=" + std::to_string(static_cast<unsigned long long>(it->second.size())) + " bytes encoded=" +
-                std::to_string(msgHex.size()) +
+                "' raw=" + std::to_string(static_cast<unsigned long long>(message.size())) + " bytes encoded=" +
+            std::to_string(msgHex.size()) +
                 " hex chars; queue size=" +
                 std::to_string(static_cast<unsigned long long>(
                     m_msgQueue[clientId].size())));
     }
 
-    it->second.clear();
+    it->second.pop();
+    if (it->second.empty())
+        m_msgToSend.erase(it);
 }
 
 /**
@@ -273,64 +322,53 @@ void Dns::splitPacket(int qType, const std::string& clientId)
  *       `m_moreMsgToGet` accordingly. Fragments are expected to arrive in order
  *       but will still be accumulated until the final fragment marks completion.
  */
-void Dns::handleDataReceived(const std::string& rdata, const std::string& clientId)
+std::optional<FragmentIdentity> Dns::handleDataReceived(const std::string& rdata,
+                                                        const std::string& clientId)
 {
-    std::string msg = rdata;
+    if (rdata == m_secretKeyServerNoData)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_moreMsgToGet = false;
+        return std::nullopt;
+    }
 
-    // no data was transmited we use the word
-    if(startsWith(rdata, m_secretKeyClientAskData) || startsWith(rdata, m_secretKeyClientKeepAlive))
+    if (rdata == m_secretKeyClientAskData ||
+        rdata == m_secretKeyClientKeepAlive ||
+        rdata == m_secretKeyServerKeepAlive ||
+        rdata == m_secretKeyAck)
     {
         dns::debug::log("Dns::handleResponse",
                         "Ignoring control record '" + rdata + "'");
-        return;
+        return std::nullopt;
     }
+
+    if (clientId.empty() || rdata.size() > MaxFragmentPayload * 4)
+        return std::nullopt;
 
     dns::debug::log("Dns::handleResponse",
                     "Processing RDATA of length " +
                         std::to_string(rdata.size()));
 
-    // Remove all the dots - only hex data is transmited, no .
-    auto noDot = std::remove(msg.begin(), msg.end(), '.');
-    msg.erase(noDot, msg.end());
-
-    // decode hex
-    std::string msgReceived = hexToString(msg);
-
-    // check validity of json
-    size_t lastBracePos = msgReceived.find_last_of('}');
-    if (lastBracePos == std::string::npos)
-    {
-        dns::debug::log("Dns::handleResponse",
-                        "Discarded response missing JSON terminator; raw='" +
-                            msgReceived + "'");
-        return;
-    }
-
     json packetJson;
-    try
-    {
-        packetJson = json::parse(msgReceived.substr(0, lastBracePos+1));
-    }
-    catch (const std::exception& e)
-    {
-        dns::debug::log(
-            "Dns::handleResponse",
-            std::string("Failed to parse JSON fragment: ") + e.what());
-        return;
-    }
-    catch (...)
-    {
-        dns::debug::log("Dns::handleResponse",
-                        "Failed to parse JSON fragment: unknown error");
-        return;
-    }
+    FragmentIdentity identity;
+    if (!decodePacketJson(rdata, packetJson) ||
+        !readFragmentIdentity(packetJson, identity) ||
+        !packetJson.contains("m") || !packetJson["m"].is_string())
+        return std::nullopt;
 
-    std::string session = packetJson["s"];
-
-    int k = packetJson["k"].get<int>();
-    int n = packetJson["n"].get<int>();
+    if (identity.session.size() > 32 ||
+        !std::all_of(identity.session.begin(), identity.session.end(), [](unsigned char c) {
+            return std::isalnum(c) != 0;
+        }) ||
+        identity.count <= 0 || identity.count > MaxFragmentsPerMessage ||
+        identity.index < 0 || identity.index >= identity.count)
+        return std::nullopt;
 
     const std::string payload = packetJson["m"].get<std::string>();
+    if (payload.size() > MaxFragmentPayload)
+        return std::nullopt;
+
+    cleanupExpiredState();
 
     size_t accumulatedSize = 0;
     bool packetFull = false;
@@ -339,32 +377,66 @@ void Dns::handleDataReceived(const std::string& rdata, const std::string& client
     {
         std::lock_guard<std::mutex> lock(m_mutex);
 
-        auto& packet = m_msgReceived[clientId][session];
+        auto clientIt = m_msgReceived.find(clientId);
+        if (clientIt == m_msgReceived.end())
+        {
+            if (m_msgReceived.size() >= MaxClients)
+                return std::nullopt;
+            clientIt = m_msgReceived.emplace(clientId, decltype(m_msgReceived)::mapped_type{}).first;
+        }
+
+        auto& sessions = clientIt->second;
+        auto sessionIt = sessions.find(identity.session);
+        if (sessionIt == sessions.end())
+        {
+            if (sessions.size() >= MaxSessionsPerClient)
+                return std::nullopt;
+
+            size_t totalSessions = 0;
+            for (const auto& client : m_msgReceived)
+                totalSessions += client.second.size();
+            if (totalSessions >= MaxTotalSessions)
+                return std::nullopt;
+
+            sessionIt = sessions.emplace(identity.session, Packet{}).first;
+        }
+
+        auto& packet = sessionIt->second;
         if(packet.id.empty())
-            packet.id = session;
+            packet.id = identity.session;
         if(packet.clientId.empty() && !clientId.empty())
             packet.clientId = clientId;
 
         if (packet.expectedCount < 0)
         {
-            packet.expectedCount = n;
+            packet.expectedCount = identity.count;
         }
-        else if (packet.expectedCount != n)
+        else if (packet.expectedCount != identity.count)
         {
             dns::debug::log(
                 "Dns::handleResponse",
-                "Fragment count mismatch for session '" + session +
+                "Fragment count mismatch for session '" + identity.session +
                     "' (expected " + std::to_string(packet.expectedCount) +
-                    ", got " + std::to_string(n) + ")");
-            packet.expectedCount = n;
+                    ", got " + std::to_string(identity.count) + ")");
+            return std::nullopt;
         }
 
-        packet.fragments[k] = payload;
+        auto existing = packet.fragments.find(identity.index);
+        if (existing != packet.fragments.end() && existing->second != payload)
+            return std::nullopt;
+
+        packet.fragments[identity.index] = payload;
+        packet.updatedAt = std::chrono::steady_clock::now();
 
         accumulatedSize = 0;
         for (const auto& fragment : packet.fragments)
         {
             accumulatedSize += fragment.second.size();
+            if (accumulatedSize > MaxAssembledMessage)
+            {
+                sessions.erase(sessionIt);
+                return std::nullopt;
+            }
         }
 
         bool allPresent =
@@ -399,7 +471,7 @@ void Dns::handleDataReceived(const std::string& rdata, const std::string& client
         packetFull = packet.isFull;
 
         m_moreMsgToGet = false;
-        for(const auto& p : m_msgReceived[clientId])
+        for(const auto& p : sessions)
         {
             if(!p.second.isFull)
             {
@@ -413,8 +485,8 @@ void Dns::handleDataReceived(const std::string& rdata, const std::string& client
 
     dns::debug::log(
         "Dns::handleResponse",
-        "Received fragment " + std::to_string(k + 1) + "/" +
-            std::to_string(n) + " for session '" + session + "' payload=" +
+        "Received fragment " + std::to_string(identity.index + 1) + "/" +
+            std::to_string(identity.count) + " for session '" + identity.session + "' payload=" +
             std::to_string(payload.size()) +
             " bytes; accumulated=" +
             std::to_string(static_cast<unsigned long long>(accumulatedSize)) +
@@ -423,6 +495,81 @@ void Dns::handleDataReceived(const std::string& rdata, const std::string& client
     dns::debug::log("Dns::handleResponse",
                     std::string("More fragments pending: ") +
                         (morePending ? "yes" : "no"));
+
+    return identity;
+}
+
+
+std::optional<FragmentIdentity> Dns::queuedFragmentIdentity(const std::string& clientId)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto queueIt = m_msgQueue.find(clientId);
+    if (queueIt == m_msgQueue.end() || queueIt->second.empty())
+        return std::nullopt;
+
+    json packetJson;
+    FragmentIdentity identity;
+    if (!decodePacketJson(queueIt->second.front(), packetJson) ||
+        !readFragmentIdentity(packetJson, identity))
+        return std::nullopt;
+    return identity;
+}
+
+
+std::string Dns::peekQueuedFragment(const std::string& clientId)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto queueIt = m_msgQueue.find(clientId);
+    if (queueIt == m_msgQueue.end() || queueIt->second.empty())
+        return {};
+    return queueIt->second.front();
+}
+
+
+bool Dns::acknowledgeQueuedFragment(const std::string& clientId,
+                                    const std::string& session,
+                                    int index)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto queueIt = m_msgQueue.find(clientId);
+    if (queueIt == m_msgQueue.end() || queueIt->second.empty())
+        return false;
+
+    json packetJson;
+    FragmentIdentity identity;
+    if (!decodePacketJson(queueIt->second.front(), packetJson) ||
+        !readFragmentIdentity(packetJson, identity) ||
+        identity.session != session || identity.index != index)
+        return false;
+
+    queueIt->second.pop();
+    if (queueIt->second.empty())
+        m_msgQueue.erase(queueIt);
+    return true;
+}
+
+
+void Dns::cleanupExpiredState()
+{
+    const auto cutoff = std::chrono::steady_clock::now() - std::chrono::minutes(5);
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    for (auto clientIt = m_msgReceived.begin(); clientIt != m_msgReceived.end(); )
+    {
+        auto& sessions = clientIt->second;
+        for (auto sessionIt = sessions.begin(); sessionIt != sessions.end(); )
+        {
+            if (sessionIt->second.updatedAt < cutoff)
+                sessionIt = sessions.erase(sessionIt);
+            else
+                ++sessionIt;
+        }
+
+        if (sessions.empty())
+            clientIt = m_msgReceived.erase(clientIt);
+        else
+            ++clientIt;
+    }
 }
 
 /**
@@ -481,11 +628,16 @@ std::pair<std::string, std::string> Dns::getMsg()
 
     if (!result.empty())
     {
+        const auto foundClient = m_msgReceived.find(foundClientId);
+        const size_t remainingSessions =
+            foundClient == m_msgReceived.end() ? 0 : foundClient->second.size();
         dns::debug::log("Dns::getMsg",
             "Assembled complete message of " +
             std::to_string(static_cast<unsigned long long>(result.size())) +
             " bytes; remaining sessions=" +
-            std::to_string(static_cast<unsigned long long>(m_msgReceived[foundClientId].size())));
+            std::to_string(static_cast<unsigned long long>(remainingSessions)));
+        if (foundClient != m_msgReceived.end() && foundClient->second.empty())
+            m_msgReceived.erase(foundClient);
     }
 
     return {foundClientId, result};

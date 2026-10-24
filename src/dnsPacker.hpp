@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <map>
 
 
@@ -16,6 +17,7 @@ struct Packet
     std::string clientId;
     int expectedCount = -1;
     std::map<int, std::string> fragments;
+    std::chrono::steady_clock::time_point updatedAt = std::chrono::steady_clock::now();
 };
 
 // https://github.com/iagox86/dnscat2
@@ -36,6 +38,7 @@ inline int getMaxMsgLen(const std::string& domain)
 
 std::string stringToHex(const std::string& input);
 std::string hexToString(const std::string& hex);
+bool tryHexToString(const std::string& hex, std::string& output);
 
 std::string addDotEvery62Chars(const std::string& str);
 

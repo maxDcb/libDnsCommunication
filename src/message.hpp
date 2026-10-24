@@ -53,6 +53,7 @@ public:
     uint getAnCount() const { return m_anCount; }
     uint getNsCount() const { return m_nsCount; }
     uint getArCount() const { return m_arCount; }
+    uint getRCode() const { return m_rcode; }
 
     bool isResponse() const { return m_qr != 0; }
     bool isRecursionDesired() const { return m_rd != 0; }
